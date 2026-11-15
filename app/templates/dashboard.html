@@ -1,0 +1,66 @@
+{% extends "base.html" %}{% block title %}Dashboard{% endblock %}
+{% block content %}
+{% set cur = currency %}
+<div class="head"><div><h1>Dashboard</h1><div class="sub">{{ d1.strftime('%d %b %Y') }}{% if d1 != d2 %} – {{ d2.strftime('%d %b %Y') }}{% endif %}</div></div>
+<form class="filters" method="get">
+  <div class="f"><label for="from">From</label><input id="from" type="date" name="from" value="{{ d1 }}"></div>
+  <div class="f"><label for="to">To</label><input id="to" type="date" name="to" value="{{ d2 }}"></div>
+  <button class="btn primary">Apply</button><a class="btn" href="{{ url_for('web.dashboard') }}">Today</a>
+</form></div>
+
+{% if d.drafts_waiting %}<div class="notice"><b>{{ d.drafts_waiting }} draft order{{ 's' if d.drafts_waiting>1 }}</b> waiting for review. <a href="{{ url_for('web.orders', status='draft') }}">Review drafts</a></div>{% endif %}
+
+<div class="grid g4">
+  <div class="card stat hero"><div class="l">Net profit (delivered − returns)</div><div class="v {{ 'neg' if d.net_profit<0 }}">{{ d.net_profit|money }} {{ cur }}</div></div>
+  <div class="card stat"><div class="l">Sales confirmed</div><div class="v">{{ d.sales|money }} {{ cur }}</div><div class="sub">{{ d.confirmed_count }} order(s)</div></div>
+  <div class="card stat"><div class="l">Delivered revenue</div><div class="v">{{ d.revenue|money }} {{ cur }}</div><div class="sub">{{ d.delivered_count }} order(s)</div></div>
+  <div class="card stat"><div class="l">Orders created</div><div class="v">{{ d.orders_created }}</div><div class="sub">{{ d.auto_orders }} from conversations</div></div>
+</div>
+
+<div class="split">
+<div>
+  <div class="card"><h2>Daily sales and profit</h2>
+    <div class="chart" role="img" aria-label="Daily sales and profit bars">
+      {% for x in d.daily %}<div class="col" title="{{ x.date }} · sales {{ x.sales|money }} · profit {{ x.profit|money }}">
+        <div class="bar" style="height:{{ (x.sales / d.chart_max * 100)|round(1) }}%"></div>
+        <div class="bar p" style="height:{{ ([x.profit,0]|max / d.chart_max * 100)|round(1) }}%"></div></div>{% endfor %}
+    </div>
+    <div class="sub">Dark = confirmed sales, light = realised profit (hover a day for figures).</div>
+  </div>
+  <div class="card"><h2>Profit breakdown (delivered orders)</h2>
+    <table><tbody>
+      <tr><td>Revenue collected (incl. shipping charged)</td><td class="r">{{ d.revenue|money }}</td></tr>
+      <tr><td>Cost of goods</td><td class="r">− {{ d.cogs|money }}</td></tr>
+      <tr><td>Carrier delivery fees</td><td class="r">− {{ d.delivery_costs|money }}</td></tr>
+      <tr><td><b>Gross profit</b></td><td class="r"><b>{{ d.gross_profit|money }}</b></td></tr>
+      <tr><td>Return fees ({{ d.returned_count }} returned)</td><td class="r">− {{ d.return_losses|money }}</td></tr>
+      <tr><td><b>Net profit</b></td><td class="r"><b class="{{ 'neg' if d.net_profit<0 else 'pos' }}">{{ d.net_profit|money }} {{ cur }}</b></td></tr>
+    </tbody></table>
+    <p class="sub">Purchases are not subtracted: their cost already enters through cost of goods when items sell. Carrier fees are filled in by the hourly EcoTrack sync.</p>
+  </div>
+  <div class="card"><h2>Top products</h2>
+    {% if d.top_products %}<table><thead><tr><th>Product</th><th class="r">Qty</th><th class="r">Revenue</th></tr></thead><tbody>
+    {% for t in d.top_products %}<tr><td>{{ t.name }}</td><td class="r">{{ t.qty }}</td><td class="r">{{ t.revenue|money }}</td></tr>{% endfor %}</tbody></table>
+    {% else %}<p class="sub">No confirmed sales in this period.</p>{% endif %}
+  </div>
+</div>
+<div>
+  <div class="card"><h2>In delivery now</h2>
+    <div class="stat"><div class="v">{{ d.in_transit_count }}</div><div class="l">orders worth {{ d.in_transit_value|money }} {{ cur }}</div></div>
+    <p class="sub">Expected profit once delivered: <b>{{ d.in_transit_profit|money }} {{ cur }}</b></p></div>
+  <div class="card"><h2>Stock and purchases</h2>
+    <table><tbody><tr><td>Stock value at cost</td><td class="r">{{ d.stock_value|money }}</td></tr>
+    <tr><td>Purchases in period ({{ d.purchases_count }})</td><td class="r">{{ d.purchases_total|money }}</td></tr></tbody></table>
+    {% if d.low_stock %}<h2 style="margin-top:14px">Low stock</h2><table><tbody>
+    {% for p in d.low_stock %}<tr><td><a href="{{ url_for('web.product_form', pid=p.id) }}">{{ p.name }}</a></td><td class="r"><span class="pill {{ 'bad' if p.stock_qty<=0 else 'draft' }}">{{ p.stock_qty }} left</span></td></tr>{% endfor %}</tbody></table>{% endif %}
+  </div>
+  <div class="card"><h2>Messaging</h2>
+    <table><tbody><tr><td>Customer messages received</td><td class="r">{{ d.msgs_in }}</td></tr>
+    <tr><td>AI answers generated</td><td class="r">{{ d.ai_total }}</td></tr>
+    <tr><td>…served from cache</td><td class="r">{{ d.ai_cached }}</td></tr>
+    <tr><td>…delivered to customers</td><td class="r">{{ d.ai_sent }}</td></tr></tbody></table>
+    <h2 style="margin-top:14px">Workers</h2>
+    {% for w in workers %}<div class="small"><span class="pill {{ 'ok' if w.online else '' }}">{{ 'online' if w.online else 'offline' }}</span> {{ w.name or w.id }} · {{ w.reply_mode if w.enabled else 'disabled' }}</div>{% else %}<p class="sub">No script registered yet.</p>{% endfor %}
+  </div>
+</div></div>
+{% endblock %}

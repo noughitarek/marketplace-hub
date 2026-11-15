@@ -1,0 +1,1 @@
+<option value="">Other…</option>{% for p in products %}<option value="{{ p.id }}" data-price="{{ p.price }}" data-name="{{ p.name|e }}" {{ 'selected' if i.product_id==p.id }}>{{ p.name }} ({{ p.stock_qty }} in stock)</option>{% endfor %}

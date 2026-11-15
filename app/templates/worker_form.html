@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block title %}Configure worker{% endblock %}
+{% block content %}
+<div class="head"><div><h1>{{ w.name or w.id }}</h1><div class="sub mono">Facebook id {{ w.id }}</div></div></div>
+<form method="post" class="card" style="max-width:780px"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<div class="f"><label for="name">Display name</label><input id="name" name="name" value="{{ w.name or '' }}"></div>
+<div class="actions" style="margin-bottom:14px"><span class="check"><input id="en" type="checkbox" name="enabled" {{ 'checked' if w.enabled }}><label for="en">Enabled (the script ignores this account until you switch it on)</label></span>
+<span class="check"><input id="co" type="checkbox" name="collect" {{ 'checked' if w.collect }}><label for="co">Store Marketplace conversations (needed to detect phone numbers and create orders)</label></span></div>
+<div class="f"><label for="rm">When a customer is waiting</label><select id="rm" name="reply_mode">
+<option value="off" {{ 'selected' if w.reply_mode=='off' }}>Do nothing - only collect</option>
+<option value="draft" {{ 'selected' if w.reply_mode=='draft' }}>Write the answer in the message box, I press send</option>
+<option value="auto" {{ 'selected' if w.reply_mode=='auto' }}>Send the answer automatically</option></select></div>
+<div class="f"><label for="cp">Extra instructions for this account (added to the shop-wide assistant prompt)</label><textarea id="cp" name="custom_prompt" placeholder="e.g. Never discuss price below the listed one. Offer free delivery above 8000 DA.">{{ w.custom_prompt or '' }}</textarea></div>
+<div class="row"><div class="f"><label for="mo">Gemini model (blank = shop default)</label><input id="mo" name="model_override" value="{{ w.model_override or '' }}"></div>
+<div class="f"><label for="te">Temperature (blank = default)</label><input id="te" name="temperature" type="number" step="0.1" min="0" max="2" value="{{ w.temperature if w.temperature is not none else '' }}"></div>
+<div class="f"><label for="pi">Check inbox every (seconds)</label><input id="pi" name="poll_interval" type="number" min="20" value="{{ w.poll_interval }}"></div></div>
+<div class="row"><div class="f"><label for="d1">Wait at least (seconds)</label><input id="d1" name="delay_min" type="number" min="0" value="{{ w.delay_min }}"></div>
+<div class="f"><label for="d2">…and at most (seconds)</label><input id="d2" name="delay_max" type="number" min="0" value="{{ w.delay_max }}"></div>
+<div class="f"><label for="mh">Maximum replies per hour</label><input id="mh" name="max_replies_per_hour" type="number" min="1" value="{{ w.max_replies_per_hour }}"></div></div>
+<p class="sub">Start with draft mode. Automated messaging on Facebook can breach its terms and lead to restrictions; the delay and hourly cap make behaviour less robotic but do not remove that risk.</p>
+<div class="actions"><button class="btn primary">Save worker</button><a class="btn" href="{{ url_for('web.workers') }}">Cancel</a></div></form>
+<form method="post" action="{{ url_for('web.worker_delete', wid=w.id) }}" onsubmit="return confirm('Remove this worker?')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm danger">Remove worker</button></form>{% endblock %}

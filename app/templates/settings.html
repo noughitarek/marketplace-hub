@@ -1,0 +1,46 @@
+{% extends "base.html" %}{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="head"><h1>Settings</h1></div>
+<form method="post" style="max-width:860px"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<div class="card"><h2>General</h2><div class="row">
+<div class="f"><label for="business_name">Shop name</label><input id="business_name" name="business_name" value="{{ s.business_name }}"></div>
+<div class="f"><label for="currency">Currency label</label><input id="currency" name="currency" value="{{ s.currency }}"></div>
+<div class="f"><label for="timezone">Time zone</label><input id="timezone" name="timezone" value="{{ s.timezone }}"></div>
+<div class="f"><label for="dsf">Default shipping fee</label><input id="dsf" type="number" name="default_shipping_fee" value="{{ s.default_shipping_fee }}"></div></div></div>
+
+<div class="card"><h2>Carrier (EcoTrack)</h2><div class="row">
+<div class="f"><label for="eu">API base URL</label><input id="eu" name="ecotrack_url" value="{{ s.ecotrack_url }}" placeholder="https://your-carrier-domain.com"><div class="small muted">The domain you use to log in; the app adds /api/v1.</div></div>
+<div class="f"><label for="et">API token</label><input id="et" type="password" name="ecotrack_token" autocomplete="off" placeholder="{{ 'saved - leave blank to keep' if masked.ecotrack_token else 'paste token' }}"></div></div>
+<div class="row"><div class="f"><label for="eb">Shop name at EcoTrack (optional)</label><input id="eb" name="ecotrack_boutique" value="{{ s.ecotrack_boutique }}"></div>
+<div class="f"><label for="ew">Default parcel weight (kg)</label><input id="ew" name="ecotrack_default_weight" value="{{ s.ecotrack_default_weight }}"></div>
+<div class="f"><label for="ac">Ask for pickup when dispatching</label><select id="ac" name="ecotrack_ask_collection"><option value="0" {{ 'selected' if s.ecotrack_ask_collection!='1' }}>No</option><option value="1" {{ 'selected' if s.ecotrack_ask_collection=='1' }}>Yes</option></select></div></div>
+<button class="btn sm" name="action" value="test_ecotrack">Save and test token</button></div>
+
+<div class="card"><h2>Assistant (Gemini)</h2><div class="row">
+<div class="f"><label for="gk">Gemini API key</label><input id="gk" type="password" name="gemini_api_key" autocomplete="off" placeholder="{{ 'saved - leave blank to keep' if masked.gemini_api_key else 'paste key' }}"></div>
+<div class="f"><label for="gm">Model</label><input id="gm" name="gemini_model" value="{{ s.gemini_model }}"></div>
+<div class="f"><label for="gt">Temperature</label><input id="gt" name="gemini_temperature" value="{{ s.gemini_temperature }}"></div></div>
+<div class="row"><div class="f"><label for="ct">Cache answers for (hours)</label><input id="ct" type="number" name="ai_cache_ttl_hours" value="{{ s.ai_cache_ttl_hours }}"></div>
+<div class="f"><label for="hl">Messages sent as context</label><input id="hl" type="number" name="ai_history_limit" value="{{ s.ai_history_limit }}"></div>
+<div class="f"><label for="ae">Pre-fill auto orders with AI</label><select id="ae" name="auto_extract_with_ai"><option value="1" {{ 'selected' if s.auto_extract_with_ai=='1' }}>Yes</option><option value="0" {{ 'selected' if s.auto_extract_with_ai!='1' }}>No</option></select></div></div>
+<div class="f"><label for="bd">What you sell / who you are</label><textarea id="bd" name="business_description">{{ s.business_description }}</textarea></div>
+<div class="f"><label for="rs">Reply style</label><textarea id="rs" name="reply_style">{{ s.reply_style }}</textarea></div>
+<div class="f"><label for="di">Delivery and payment information</label><textarea id="di" name="delivery_info">{{ s.delivery_info }}</textarea></div></div>
+
+<div class="card"><h2>Background tasks</h2><div class="row">
+<div class="f"><label for="ps">Look for new phone numbers every (minutes)</label><input id="ps" type="number" min="1" name="phone_scan_minutes" value="{{ s.phone_scan_minutes }}"></div>
+<div class="f"><label for="es">Sync carrier statuses every (minutes)</label><input id="es" type="number" min="5" name="ecotrack_sync_minutes" value="{{ s.ecotrack_sync_minutes }}"></div></div>
+<table><tbody>{% for r in runs %}<tr><td class="small nowrap">{{ r.started_at|localdt('%d/%m %H:%M') }}</td><td class="small">{{ r.name }}</td><td><span class="pill {{ 'ok' if r.ok else 'bad' }}">{{ 'ok' if r.ok else 'failed' }}</span></td><td class="small">{{ r.message }}</td></tr>{% else %}<tr><td class="muted small">No runs yet.</td></tr>{% endfor %}</tbody></table></div>
+<div class="actions" style="margin-bottom:22px"><button class="btn primary" name="action" value="save">Save settings</button></div>
+</form>
+
+<div class="card" style="max-width:860px"><h2>Run a task now</h2><div class="actions">
+<form method="post" action="{{ url_for('web.run_task_now', name='scan_phones') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm">Scan messages for phone numbers</button></form>
+<form method="post" action="{{ url_for('web.run_task_now', name='sync_ecotrack') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm">Sync EcoTrack statuses</button></form></div></div>
+
+<div class="card" style="max-width:860px"><h2>Script connection</h2>
+<p class="sub">Paste these two values into the Tampermonkey script (menu → “Configure server”).</p>
+<div class="f"><label>Server URL</label><code>{{ base_url }}</code></div>
+<div class="f"><label>Script key</label><code>{{ s.agent_api_key }}</code></div>
+<form method="post" onsubmit="return confirm('Existing scripts will stop working until you update the key. Continue?')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm danger" name="action" value="regen_key">Generate a new key</button></form></div>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Message workers{% endblock %}
+{% block content %}
+<div class="head"><div><h1>Message workers</h1><div class="sub">Each Facebook account running the Tampermonkey script registers itself here. Configure what it may do.</div></div></div>
+{% if not ai_ready %}<div class="notice">No Gemini API key yet, so no answers can be generated. <a href="{{ url_for('web.settings_page') }}">Add it in settings</a>.</div>{% endif %}
+<div class="card tbl"><table><thead><tr><th>Account</th><th>Connection</th><th>Processing</th><th>Replies</th><th class="r">Conversations</th><th></th></tr></thead><tbody>
+{% for w in workers %}<tr><td><b>{{ w.name or w.id }}</b><div class="small muted mono">{{ w.id }}</div></td>
+<td><span class="pill {{ 'ok' if w.online else '' }}">{{ 'online' if w.online else 'offline' }}</span><div class="small muted">{{ w.last_seen|localdt if w.last_seen else 'never' }}{% if w.script_version %} · v{{ w.script_version }}{% endif %}</div></td>
+<td>{% if w.enabled %}<span class="pill ok">enabled</span>{% else %}<span class="pill draft">waiting for activation</span>{% endif %}{% if not w.collect %} <span class="pill">not collecting</span>{% endif %}</td>
+<td>{{ {'off':'No replies','draft':'Draft only (you press send)','auto':'Auto-send'}[w.reply_mode or 'off'] }}</td>
+<td class="r"><a href="{{ url_for('web.conversations', worker=w.id) }}">{{ counts.get(w.id, 0) }}</a></td>
+<td class="r"><a class="btn sm" href="{{ url_for('web.worker_form', wid=w.id) }}">Configure</a></td></tr>
+{% else %}<tr><td colspan="6" class="muted">Nothing registered yet. Install the Tampermonkey script (see Settings → Script connection), open Facebook Marketplace inbox, and the account appears here within a minute.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

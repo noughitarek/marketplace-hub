@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block title %}Purchase{% endblock %}
+{% block content %}
+<div class="head"><h1>{{ 'Edit purchase #%d' % pu.id if pu.id else 'Record purchase' }}</h1></div>
+{% if pu.id %}<div class="notice small">Editing re-applies stock for the new lines. The product's average cost is only recalculated when a purchase is first recorded; adjust it on the product if needed.</div>{% endif %}
+<form method="post" class="card" style="max-width:860px"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<div class="row"><div class="f"><label for="supplier">Supplier</label><input id="supplier" name="supplier" value="{{ pu.supplier or '' }}"></div>
+<div class="f"><label for="date">Date</label><input id="date" type="date" name="purchased_at" value="{{ (pu.purchased_at or today) }}"></div>
+<div class="f"><label for="sc">Shipping / extra cost</label><input id="sc" type="number" min="0" name="shipping_cost" value="{{ pu.shipping_cost or 0 }}"></div></div>
+<table class="items"><thead><tr><th>Product</th><th style="width:90px">Qty</th><th style="width:130px">Unit cost</th><th></th></tr></thead><tbody id="lines">
+{% for i in pu.items %}<tr class="line"><td><select name="item_product_id">{% for p in products %}<option value="{{ p.id }}" {{ 'selected' if i.product_id==p.id }}>{{ p.name }}</option>{% endfor %}</select></td>
+<td><input type="number" min="1" name="item_qty" value="{{ i.qty }}"></td><td><input type="number" min="0" name="item_cost" value="{{ i.unit_cost }}"></td><td><button type="button" class="btn sm rm" aria-label="Remove line">×</button></td></tr>{% endfor %}</tbody></table>
+<button type="button" class="btn sm" id="addline" style="margin:8px 0 14px">Add line</button>
+<div class="f"><label for="notes">Notes</label><textarea id="notes" name="notes" style="min-height:60px">{{ pu.notes or '' }}</textarea></div>
+<div class="actions"><button class="btn primary">Save purchase</button><a class="btn" href="{{ url_for('web.purchases') }}">Cancel</a></div></form>
+<template id="tpl"><tr class="line"><td><select name="item_product_id">{% for p in products %}<option value="{{ p.id }}" data-cost="{{ p.cost }}">{{ p.name }}</option>{% endfor %}</select></td><td><input type="number" min="1" name="item_qty" value="1"></td><td><input type="number" min="0" name="item_cost" value="0"></td><td><button type="button" class="btn sm rm" aria-label="Remove line">×</button></td></tr></template>
+{% endblock %}
+{% block scripts %}<script>
+const L=document.getElementById('lines');
+function wire(r){r.querySelector('.rm').onclick=()=>r.remove();const s=r.querySelector('select');s.onchange=()=>{const c=s.selectedOptions[0].dataset.cost;if(c&&+r.querySelector('[name=item_cost]').value===0)r.querySelector('[name=item_cost]').value=c;};}
+L.querySelectorAll('.line').forEach(wire);
+document.getElementById('addline').onclick=()=>{L.appendChild(document.getElementById('tpl').content.cloneNode(true));wire(L.lastElementChild);};
+if(!L.children.length)document.getElementById('addline').click();
+</script>{% endblock %}

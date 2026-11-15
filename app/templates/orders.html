@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}Orders{% endblock %}
+{% block content %}
+<div class="head"><h1>Orders</h1><a class="btn primary" href="{{ url_for('web.order_form') }}">New order</a></div>
+<div class="tabs"><a href="{{ url_for('web.orders') }}" class="{{ 'on' if not status }}">All</a>
+{% for s in statuses %}<a href="{{ url_for('web.orders', status=s) }}" class="{{ 'on' if status==s }}">{{ s|replace('_',' ') }} {{ counts.get(s,0) }}</a>{% endfor %}</div>
+<form class="filters" method="get"><input type="hidden" name="status" value="{{ status }}"><div class="f"><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Name, phone, tracking, commune"></div><button class="btn">Search</button></form>
+<div class="card tbl"><table><thead><tr><th>#</th><th>Customer</th><th>Destination</th><th>Products</th><th class="r">Total</th><th>Status</th><th>Tracking</th><th>Created</th></tr></thead><tbody>
+{% for o in orders %}<tr><td><a href="{{ url_for('web.order_form', oid=o.id) }}">#{{ o.id }}</a></td>
+<td>{{ o.customer_name or '—' }}<div class="small muted">{{ o.phone or 'no phone' }}</div></td>
+<td>{{ o.commune or '—' }}<div class="small muted">{{ o.wilaya_code or '' }}</div></td>
+<td class="small">{% for i in o.items %}{{ i.name }} ×{{ i.qty }}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">none</span>{% endfor %}</td>
+<td class="r">{{ o.total|money }}</td>
+<td><span class="pill {{ o.status }}">{{ o.status|replace('_',' ') }}</span>{% if o.needs_review %} <span class="pill draft">to review</span>{% endif %}{% if o.source=='auto' %}<div class="small muted">from chat</div>{% endif %}
+{% if o.ecotrack_status %}<div class="small muted">{{ o.ecotrack_status }}</div>{% endif %}</td>
+<td class="small mono">{{ o.ecotrack_tracking or '—' }}</td><td class="small nowrap">{{ o.created_at|localdt }}</td></tr>
+{% else %}<tr><td colspan="8" class="muted">No orders here. Orders appear automatically when a customer shares a phone number in a conversation.</td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}{{ p.name or 'New product' }}{% endblock %}
+{% block content %}
+<div class="head"><h1>{{ 'Edit product' if p.id else 'New product' }}</h1></div>
+<form method="post" class="card" style="max-width:760px"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<div class="f"><label for="name">Name</label><input id="name" name="name" value="{{ p.name or '' }}" required></div>
+<div class="row"><div class="f"><label for="sku">SKU</label><input id="sku" name="sku" value="{{ p.sku or '' }}"></div>
+<div class="f"><label for="price">Selling price ({{ currency }})</label><input id="price" name="price" type="number" min="0" value="{{ p.price or 0 }}"></div>
+<div class="f"><label for="cost">Cost ({{ currency }})</label><input id="cost" name="cost" type="number" min="0" value="{{ p.cost or 0 }}"></div></div>
+<div class="f"><label for="description">Description (the AI assistant reads this when answering customers)</label><textarea id="description" name="description">{{ p.description or '' }}</textarea></div>
+<div class="row"><div class="f"><label for="low">Low-stock alert at</label><input id="low" name="low_stock_threshold" type="number" min="0" value="{{ p.low_stock_threshold if p.low_stock_threshold is not none else 3 }}"></div>
+<div class="f"><label for="weight">Weight (kg)</label><input id="weight" name="weight" type="number" step="0.01" value="{{ p.weight or '' }}"></div>
+{% if not p.id %}<div class="f"><label for="op">Opening stock</label><input id="op" name="opening_stock" type="number" value="0"></div>{% else %}<div class="f"><label>Current stock</label><div style="padding:7px 0"><b>{{ p.stock_qty }}</b> <a class="small" href="{{ url_for('web.stock', product=p.id) }}">history</a></div></div>{% endif %}</div>
+<div class="f"><label for="img">Image URL</label><input id="img" name="image_url" value="{{ p.image_url or '' }}"></div>
+<div class="actions" style="margin-bottom:14px"><span class="check"><input id="fr" type="checkbox" name="fragile" {{ 'checked' if p.fragile }}><label for="fr">Fragile</label></span>
+<span class="check"><input id="ac" type="checkbox" name="active" {{ 'checked' if p.active }}><label for="ac">Active (visible to the assistant and in orders)</label></span></div>
+<div class="actions"><button class="btn primary">Save product</button><a class="btn" href="{{ url_for('web.products') }}">Cancel</a></div></form>{% endblock %}

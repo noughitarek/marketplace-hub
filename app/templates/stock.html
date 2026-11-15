@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Stock{% endblock %}
+{% block content %}
+<div class="head"><div><h1>Stock</h1><div class="sub">Stock value at cost: <b>{{ value|money }} {{ currency }}</b></div></div><a class="btn primary" href="{{ url_for('web.purchase_form') }}">Record purchase</a></div>
+<div class="card tbl"><table><thead><tr><th>Product</th><th class="r">In stock</th><th class="r">Avg cost</th><th class="r">Value</th><th>Adjust (count correction, loss, gift)</th></tr></thead><tbody>
+{% for p in products if p.active %}<tr><td><a href="{{ url_for('web.stock', product=p.id) }}">{{ p.name }}</a></td>
+<td class="r"><span class="pill {{ 'bad' if p.stock_qty<=0 else ('draft' if p.low) }}">{{ p.stock_qty }}</span></td><td class="r">{{ p.cost|money }}</td><td class="r">{{ ((p.stock_qty if p.stock_qty>0 else 0)*p.cost)|money }}</td>
+<td><form method="post" action="{{ url_for('web.stock_adjust') }}" class="actions"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="product_id" value="{{ p.id }}">
+<input name="delta" type="number" placeholder="+5 or -2" style="width:90px" aria-label="Quantity change"><input name="note" placeholder="Reason" style="width:170px" aria-label="Reason"><button class="btn sm">Apply</button></form></td></tr>
+{% else %}<tr><td colspan="5" class="muted">No products yet.</td></tr>{% endfor %}</tbody></table></div>
+<div class="card tbl"><h2>Movements{% if pid %} <a class="small" href="{{ url_for('web.stock') }}">(show all)</a>{% endif %}</h2><table><thead><tr><th>When</th><th>Product</th><th class="r">Change</th><th>Reason</th></tr></thead><tbody>
+{% for m in movements %}<tr><td class="nowrap">{{ m.created_at|localdt }}</td><td>{{ m.product.name }}</td><td class="r {{ 'pos' if m.qty>0 else 'neg' }}">{{ '%+d' % m.qty }}</td><td class="small">{{ m.note or m.reason }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">No movements yet.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

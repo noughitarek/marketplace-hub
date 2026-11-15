@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block title %}{{ c.customer_name }}{% endblock %}
+{% block content %}
+<div class="head"><div><h1>{{ c.customer_name or c.thread_id }}</h1><div class="sub">{{ c.item_title or 'No listing detected' }} · via {{ c.worker.name or c.worker_id }}{% if c.thread_url %} · <a href="{{ c.thread_url }}" target="_blank" rel="noopener">open on Facebook</a>{% endif %}</div></div>
+<form method="post" action="{{ url_for('web.conversation_order', cid=c.id) }}" class="actions"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input name="phone" placeholder="Phone (optional)" style="width:160px" aria-label="Phone"><button class="btn">Create order from chat</button></form></div>
+<div class="split"><div class="card"><div class="chat">{% for m in c.messages %}<div class="msg {{ m.sender }}"><span class="who">{{ {'customer':'Customer','me':'You','bot':'AI'}[m.sender] }}</span>{{ m.text }}{% if m.phones %}<div class="small"><span class="hl">phone: {{ m.phones|join(', ') }}</span></div>{% endif %}</div>{% endfor %}</div></div>
+<div><div class="card"><h2>Orders</h2>{% for o in orders %}<div><a href="{{ url_for('web.order_form', oid=o.id) }}">#{{ o.id }}</a> <span class="pill {{ o.status }}">{{ o.status }}</span> {{ o.phone }}</div>{% else %}<p class="sub">No order linked.</p>{% endfor %}</div>
+<div class="card"><h2>Assistant</h2><form method="post" action="{{ url_for('web.conversation_test', cid=c.id) }}" class="actions"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<button class="btn sm">Test reply</button><span class="check"><input type="checkbox" id="fo" name="force" value="1"><label for="fo">Skip cache</label></span></form>
+{% for r in ai %}<div class="card" style="margin:10px 0 0;padding:10px"><div class="small muted">{{ r.created_at|localdt }} · {{ r.model }} · {{ 'cache' if r.cached else (r.latency_ms|string + ' ms' if r.latency_ms else '') }} · <span class="pill {{ 'ok' if r.status in ('sent','drafted') else ('bad' if r.status=='failed') }}">{{ r.status }}</span></div>
+<div style="white-space:pre-wrap">{{ r.response_text or r.error }}</div></div>{% endfor %}</div></div></div>{% endblock %}

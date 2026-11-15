@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}Conversations{% endblock %}
+{% block content %}
+<div class="head"><h1>Conversations</h1></div>
+<div class="card tbl"><table><thead><tr><th>Customer</th><th>Listing</th><th>Last message</th><th>Waiting</th><th>Order</th></tr></thead><tbody>
+{% for c in convs %}<tr><td><a href="{{ url_for('web.conversation_view', cid=c.id) }}">{{ c.customer_name or c.thread_id }}</a></td><td class="small">{{ c.item_title or '—' }}</td>
+<td class="small nowrap">{{ c.last_message_at|localdt }}</td><td>{% if c.last_sender=='customer' %}<span class="pill draft">customer waiting</span>{% else %}<span class="pill ok">answered</span>{% endif %}</td>
+<td>{% if order_ids.get(c.id) %}<a href="{{ url_for('web.order_form', oid=order_ids[c.id]) }}">#{{ order_ids[c.id] }}</a>{% else %}—{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">No conversations stored yet.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

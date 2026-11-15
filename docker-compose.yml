@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-hub}
+      POSTGRES_DB: hub
+    volumes: [pgdata:/var/lib/postgresql/data]
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on: [db]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hub:${DB_PASSWORD:-hub}@db:5432/hub
+    ports: ["8000:8000"]
+volumes:
+  pgdata:

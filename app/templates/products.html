@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Products{% endblock %}
+{% block content %}
+<div class="head"><h1>Products</h1><a class="btn primary" href="{{ url_for('web.product_form') }}">New product</a></div>
+<form class="filters" method="get"><div class="f"><label for="q">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Name or SKU"></div><button class="btn">Search</button></form>
+<div class="card tbl"><table><thead><tr><th>Product</th><th>SKU</th><th class="r">Price</th><th class="r">Cost</th><th class="r">Margin</th><th class="r">Stock</th><th></th></tr></thead><tbody>
+{% for p in products %}<tr class="{{ 'muted' if not p.active }}"><td><a href="{{ url_for('web.product_form', pid=p.id) }}">{{ p.name }}</a>{% if not p.active %} <span class="pill">archived</span>{% endif %}</td>
+<td>{{ p.sku or '—' }}</td><td class="r">{{ p.price|money }}</td><td class="r">{{ p.cost|money }}</td><td class="r">{{ (p.price-p.cost)|money }}</td>
+<td class="r"><span class="pill {{ 'bad' if p.stock_qty<=0 else ('draft' if p.low) }}">{{ p.stock_qty }}</span></td>
+<td class="r nowrap"><a class="btn sm" href="{{ url_for('web.product_form', pid=p.id) }}">Edit</a>
+<form method="post" action="{{ url_for('web.product_delete', pid=p.id) }}" style="display:inline" onsubmit="return confirm('Delete {{ p.name|e }}?')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm danger">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="7" class="muted">No products yet. Add your first product to start taking orders.</td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

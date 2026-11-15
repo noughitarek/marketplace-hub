@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block title %}Purchases{% endblock %}
+{% block content %}
+<div class="head"><h1>Purchases</h1><a class="btn primary" href="{{ url_for('web.purchase_form') }}">Record purchase</a></div>
+<div class="card tbl"><table><thead><tr><th>Date</th><th>Supplier</th><th>Items</th><th class="r">Shipping</th><th class="r">Total</th><th></th></tr></thead><tbody>
+{% for p in purchases %}<tr><td class="nowrap">{{ p.purchased_at.strftime('%d/%m/%Y') }}</td><td>{{ p.supplier or '—' }}</td>
+<td class="small">{% for i in p.items %}{{ i.product.name }} ×{{ i.qty }} @ {{ i.unit_cost|money }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+<td class="r">{{ p.shipping_cost|money }}</td><td class="r"><b>{{ p.total|money }}</b></td>
+<td class="r nowrap"><a class="btn sm" href="{{ url_for('web.purchase_form', pid=p.id) }}">Edit</a>
+<form method="post" action="{{ url_for('web.purchase_delete', pid=p.id) }}" style="display:inline" onsubmit="return confirm('Delete this purchase? Its stock will be removed.')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm danger">Delete</button></form></td></tr>
+{% else %}<tr><td colspan="6" class="muted">No purchases yet. Record what you buy to keep stock and costs accurate.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

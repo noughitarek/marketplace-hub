@@ -1,0 +1,89 @@
+{% extends "base.html" %}{% block title %}{{ 'Order #%d' % o.id if o.id else 'New order' }}{% endblock %}
+{% block content %}
+{% set locked = o.ecotrack_tracking and not o.remote_modifiable %}
+<div class="head"><div><h1>{{ 'Order #%d' % o.id if o.id else 'New order' }} {% if o.id %}<span class="pill {{ o.status }}">{{ o.status|replace('_',' ') }}</span>{% endif %}</h1>
+{% if o.ecotrack_tracking %}<div class="sub">EcoTrack <span class="mono">{{ o.ecotrack_tracking }}</span> · carrier status: <b>{{ o.ecotrack_status or 'unknown' }}</b>{% if o.ecotrack_checked_at %} (checked {{ o.ecotrack_checked_at|localdt }}){% endif %}</div>{% endif %}</div></div>
+
+{% if was_review %}<div class="notice"><b>Created automatically from a conversation.</b> Check the customer details against the messages on the right, fix what is wrong, then confirm to send it to EcoTrack.{% if o.ai_note %}<br><span class="small">{{ o.ai_note }}</span>{% endif %}</div>{% endif %}
+{% if o.ecotrack_error %}<div class="flash warn">{{ o.ecotrack_error }}</div>{% endif %}
+{% if locked %}<div class="notice">The carrier already processed this order, so changes here are <b>not</b> sent to EcoTrack any more.</div>{% endif %}
+{% if not eco_ready %}<div class="notice">EcoTrack is not configured yet, so confirming will fail. <a href="{{ url_for('web.settings_page') }}">Open settings</a></div>{% endif %}
+
+<div class="split">
+<form method="post" id="orderform"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<div class="card"><h2>Customer</h2>
+  <div class="row"><div class="f"><label for="customer_name">Full name</label><input id="customer_name" name="customer_name" value="{{ o.customer_name or '' }}"></div>
+  <div class="f"><label for="phone">Phone</label><input id="phone" name="phone" inputmode="tel" value="{{ o.phone or '' }}"></div>
+  <div class="f"><label for="phone2">Second phone</label><input id="phone2" name="phone2" inputmode="tel" value="{{ o.phone2 or '' }}"></div></div>
+  <div class="row"><div class="f"><label for="wilaya">Wilaya</label><select id="wilaya" name="wilaya_code"><option value="">Choose…</option>
+    {% for w in wilayas %}<option value="{{ w.id }}" {{ 'selected' if o.wilaya_code==w.id }}>{{ '%02d' % w.id }} · {{ w.name }}</option>{% endfor %}</select></div>
+  <div class="f"><label for="commune">Commune</label><input id="commune" name="commune" list="communes" value="{{ o.commune or '' }}" autocomplete="off"><datalist id="communes"></datalist></div>
+  <div class="f"><label for="postal">Postal code</label><input id="postal" name="postal_code" value="{{ o.postal_code or '' }}"></div></div>
+  <div class="f"><label for="address">Address</label><input id="address" name="address" maxlength="255" value="{{ o.address or '' }}"></div>
+  <div class="row"><div class="f"><label for="gps">Location link (optional)</label><input id="gps" name="gps_link" value="{{ o.gps_link or '' }}"></div>
+  <div class="f"><label for="notes">Delivery note</label><input id="notes" name="notes" maxlength="255" value="{{ o.notes or '' }}"></div></div>
+  <div class="actions"><span class="check"><input type="checkbox" id="stop_desk" name="stop_desk" {{ 'checked' if o.stop_desk }}><label for="stop_desk">Pick-up at stop desk</label></span>
+  <span class="check"><input type="checkbox" id="fragile" name="fragile" {{ 'checked' if o.fragile }}><label for="fragile">Fragile</label></span></div>
+</div>
+
+<div class="card"><h2>Products</h2>
+<div class="tbl"><table class="items"><thead><tr><th style="width:36%">Product</th><th>Label sent to carrier</th><th style="width:70px">Qty</th><th style="width:100px">Unit price</th><th class="r">Line</th><th></th></tr></thead><tbody id="lines">
+{% for i in o.items %}<tr class="line"><td><select name="item_product_id" class="pid">{% include "_product_options.html" %}</select></td>
+<td><input name="item_name" value="{{ i.name }}"></td><td><input name="item_qty" type="number" min="1" value="{{ i.qty }}" class="qty"></td>
+<td><input name="item_price" type="number" min="0" value="{{ i.unit_price }}" class="price"></td><td class="r linetotal">0</td><td><button type="button" class="btn sm rm" aria-label="Remove line">×</button></td></tr>{% endfor %}
+</tbody></table></div>
+<button type="button" class="btn sm" id="addline" style="margin-top:8px">Add product</button>
+<div class="row" style="margin-top:14px"><div class="f"><label for="ship">Shipping charged to customer</label><input id="ship" name="shipping_fee" type="number" min="0" value="{{ o.shipping_fee or 0 }}"><div class="small muted" id="feehint"></div></div>
+<div class="f"><label for="disc">Discount</label><input id="disc" name="discount" type="number" min="0" value="{{ o.discount or 0 }}"></div>
+<div class="f"><label>Cash to collect</label><div style="font-size:1.4rem;font-weight:700;padding-top:2px"><span id="grand">{{ o.total|money }}</span> {{ currency }}</div></div></div>
+</div>
+
+<div class="actions">
+  {% if o.status == 'draft' %}<button class="btn" name="action" value="save">Save draft</button><button class="btn primary" name="action" value="confirm">Confirm and send to EcoTrack</button>
+  {% else %}<button class="btn primary" name="action" value="save">Save changes{% if o.remote_modifiable %} (and update EcoTrack){% endif %}</button>{% endif %}
+  <a class="btn" href="{{ url_for('web.orders') }}">Back</a>
+</div>
+</form>
+
+<div>
+{% if o.conversation %}<div class="card"><h2>Conversation with {{ o.conversation.customer_name or 'customer' }}</h2>
+  {% if o.conversation.item_title %}<div class="sub" style="margin-bottom:8px">About: {{ o.conversation.item_title }}</div>{% endif %}
+  <div class="chat" id="chat">{% for m in o.conversation.messages %}<div class="msg {{ m.sender }}"><span class="who">{{ {'customer':'Customer','me':'You','bot':'AI'}[m.sender] }}</span>{{ m.text }}</div>{% endfor %}</div>
+  <p class="small"><a href="{{ url_for('web.conversation_view', cid=o.conversation.id) }}">Open full conversation</a></p></div>{% endif %}
+{% if o.id and o.ecotrack_tracking %}<div class="card"><h2>Carrier</h2>
+  <div class="actions"><form method="post" action="{{ url_for('web.order_refresh', oid=o.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm">Refresh status</button></form>
+  {% if o.status == 'confirmed' and o.remote_modifiable %}<form method="post" action="{{ url_for('web.order_ship', oid=o.id) }}" onsubmit="return confirm('Dispatch this order? It cannot be edited at EcoTrack afterwards.')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm">Dispatch to carrier</button></form>{% endif %}</div>
+  {% if o.delivery_cost %}<p class="small">Delivery fee {{ o.delivery_cost|money }} · return fee {{ o.return_cost|money }} · est. profit <b>{{ o.profit|money }}</b></p>{% endif %}
+  {% if o.ecotrack_activity %}<table class="small"><tbody>{% for a in (o.ecotrack_activity|list)[-6:]|reverse %}<tr><td class="nowrap">{{ a.get('date','') }} {{ a.get('time','')[:5] }}</td><td>{{ a.get('reason') or a.get('status') or '' }}</td></tr>{% endfor %}</tbody></table>{% endif %}</div>{% endif %}
+{% if o.id %}<div class="card"><h2>Danger zone</h2><div class="actions">
+  {% if o.status not in ('cancelled','delivered') %}<form method="post" action="{{ url_for('web.order_cancel', oid=o.id) }}" onsubmit="return confirm('Mark as cancelled?')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm">Mark cancelled</button></form>{% endif %}
+  <form method="post" action="{{ url_for('web.order_delete', oid=o.id) }}" onsubmit="return confirm('Delete this order{{ ' and its EcoTrack shipment' if o.ecotrack_tracking }}?')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm danger">Delete order</button></form>
+  {% if request.args.get('delete_failed') %}<form method="post" action="{{ url_for('web.order_delete', oid=o.id) }}" onsubmit="return confirm('Delete only here? The shipment stays at EcoTrack.')"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="force" value="1"><button class="btn sm danger">Delete here only</button></form>{% endif %}
+</div></div>{% endif %}
+</div></div>
+
+<template id="linetpl"><tr class="line"><td><select name="item_product_id" class="pid"><option value="">Other…</option>{% for p in products %}<option value="{{ p.id }}" data-price="{{ p.price }}" data-name="{{ p.name|e }}">{{ p.name }} ({{ p.stock_qty }} in stock)</option>{% endfor %}</select></td>
+<td><input name="item_name"></td><td><input name="item_qty" type="number" min="1" value="1" class="qty"></td><td><input name="item_price" type="number" min="0" value="0" class="price"></td><td class="r linetotal">0</td><td><button type="button" class="btn sm rm" aria-label="Remove line">×</button></td></tr></template>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const $=s=>document.querySelector(s), lines=$('#lines'), fmt=n=>Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+  function recalc(){let sum=0;lines.querySelectorAll('.line').forEach(r=>{const t=(+r.querySelector('.qty').value||0)*(+r.querySelector('.price').value||0);r.querySelector('.linetotal').textContent=fmt(t);sum+=t;});
+    $('#grand').textContent=fmt(Math.max(0,sum-(+$('#disc').value||0)+(+$('#ship').value||0)));}
+  function wire(r){r.querySelector('.pid').addEventListener('change',e=>{const o=e.target.selectedOptions[0];if(o&&o.value){r.querySelector('[name=item_name]').value=o.dataset.name;r.querySelector('.price').value=o.dataset.price;}recalc();});
+    r.querySelectorAll('input').forEach(i=>i.addEventListener('input',recalc));r.querySelector('.rm').addEventListener('click',()=>{r.remove();recalc();});}
+  lines.querySelectorAll('.line').forEach(wire);
+  $('#addline').addEventListener('click',()=>{lines.appendChild($('#linetpl').content.cloneNode(true));wire(lines.lastElementChild);});
+  ['#disc','#ship'].forEach(s=>$(s).addEventListener('input',recalc));
+  if(!lines.children.length)$('#addline').click();
+  // shipping fee + communes from EcoTrack reference data (silently skipped when not configured)
+  let fees={};fetch('{{ url_for("web.ref_fees") }}').then(r=>r.json()).then(j=>{fees=j;hint();}).catch(()=>{});
+  function hint(){const f=fees[$('#wilaya').value];if(f){const d=$('#stop_desk').checked;$('#feehint').innerHTML='Carrier tariff: '+(d?f.desk:f.home)+' · <a href="#" id="usefee">use</a>';const a=$('#usefee');a&&a.addEventListener('click',e=>{e.preventDefault();$('#ship').value=d?f.desk:f.home;recalc();});}else $('#feehint').textContent='';}
+  let communes=[];function loadCommunes(){const w=$('#wilaya').value;$('#communes').innerHTML='';if(!w)return;fetch('{{ url_for("web.ref_communes") }}?wilaya='+w).then(r=>r.json()).then(j=>{communes=j;$('#communes').innerHTML=j.map(c=>'<option value="'+c.nom.replace(/"/g,'&quot;')+'">').join('');});}
+  $('#commune').addEventListener('change',()=>{const c=communes.find(c=>c.nom.toLowerCase()===$('#commune').value.trim().toLowerCase());if(c&&c.code_postal&&!$('#postal').value)$('#postal').value=c.code_postal;});
+  $('#wilaya').addEventListener('change',()=>{loadCommunes();hint();});$('#stop_desk').addEventListener('change',hint);
+  loadCommunes();recalc();const chat=$('#chat');if(chat)chat.scrollTop=chat.scrollHeight;
+})();
+</script>
+{% endblock %}
