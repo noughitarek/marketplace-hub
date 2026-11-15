@@ -33,7 +33,9 @@ def login():
             session["auth"] = True
             session["_csrf"] = secrets.token_hex(16)
             nxt = request.args.get("next", "")
-            return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("web.dashboard"))
+            if nxt.startswith("/") and not nxt.startswith("//"):
+                return redirect(request.script_root + nxt)
+            return redirect(url_for("web.dashboard"))
         flash("Wrong password.", "error")
     return render_template("login.html")
 
@@ -469,7 +471,7 @@ def settings_page():
         if k != "agent_api_key":
             s[k] = ""
     runs = TaskRun.query.order_by(TaskRun.id.desc()).limit(12).all()
-    return render_template("settings.html", s=s, masked=masked, runs=runs, base_url=request.host_url.rstrip("/"))
+    return render_template("settings.html", s=s, masked=masked, runs=runs, base_url=request.url_root.rstrip("/"))
 
 
 @bp.post("/tasks/<name>/run")

@@ -6,6 +6,7 @@ _db = os.getenv("DATABASE_URL", "postgresql+psycopg2://hub:hub@localhost:5432/hu
 if _db.startswith("postgres://"):
     _db = _db.replace("postgres://", "postgresql+psycopg2://", 1)
 
+URL_PREFIX = os.getenv("URL_PREFIX", "").rstrip("/")          # <-- new
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
@@ -16,3 +17,7 @@ class Config:
     SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "1") == "1"
     SESSION_COOKIE_SAMESITE = "Lax"
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024
+    # --- new: keep this app's cookie separate from your other Flask apps ---
+    APPLICATION_ROOT = URL_PREFIX or "/"
+    SESSION_COOKIE_PATH = URL_PREFIX or "/"
+    SESSION_COOKIE_NAME = "mhub_session"
