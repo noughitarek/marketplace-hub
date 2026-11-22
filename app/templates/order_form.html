@@ -48,7 +48,7 @@
 <div>
 {% if o.conversation %}<div class="card"><h2>Conversation with {{ o.conversation.customer_name or 'customer' }}</h2>
   {% if o.conversation.item_title %}<div class="sub" style="margin-bottom:8px">About: {{ o.conversation.item_title }}</div>{% endif %}
-  <div class="chat" id="chat">{% for m in o.conversation.messages %}<div class="msg {{ m.sender }}"><span class="who">{{ {'customer':'Customer','me':'You','bot':'AI'}[m.sender] }}</span>{{ m.text }}</div>{% endfor %}</div>
+  <div class="chat" id="chat">{% for m in o.conversation.messages %}<div class="msg {{ m.sender }}"><span class="who">{{ {'customer':'Customer','me':'You','bot':'AI'}[m.sender] }}</span>{% if m.image_path %}<div style="margin:4px 0"><a href="{{ url_for('static', filename=m.image_path) }}" target="_blank" rel="noopener"><img src="{{ url_for('static', filename=m.image_path) }}" alt="Image" style="max-width:200px;max-height:200px;border-radius:6px;display:block"></a></div>{% endif %}{% if m.audio_path %}<div style="margin:6px 0"><audio controls src="{{ url_for('static', filename=m.audio_path) }}" style="max-width:100%"></audio></div>{% endif %}{% if m.text %}{{ m.text }}{% endif %}</div>{% endfor %}</div>
   <p class="small"><a href="{{ url_for('web.conversation_view', cid=o.conversation.id) }}">Open full conversation</a></p></div>{% endif %}
 {% if o.id and o.ecotrack_tracking %}<div class="card"><h2>Carrier</h2>
   <div class="actions"><form method="post" action="{{ url_for('web.order_refresh', oid=o.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="btn sm">Refresh status</button></form>

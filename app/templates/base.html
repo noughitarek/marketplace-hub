@@ -14,6 +14,7 @@
   <a href="{{ url_for('web.purchases') }}" class="{{ 'on' if ep.startswith('web.purchase') }}">Purchases</a>
   <a href="{{ url_for('web.conversations') }}" class="{{ 'on' if ep.startswith('web.conversation') }}">Conversations</a>
   <a href="{{ url_for('web.workers') }}" class="{{ 'on' if ep.startswith('web.worker') }}">Message workers</a>
+  <a href="{{ url_for('web.images') }}" class="{{ 'on' if ep.startswith('web.image') }}">Images</a>
   <a href="{{ url_for('web.settings_page') }}" class="{{ 'on' if ep=='web.settings_page' }}">Settings</a>
   <div class="grow"></div>
   <form method="post" action="{{ url_for('web.logout') }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button>Sign out</button></form>

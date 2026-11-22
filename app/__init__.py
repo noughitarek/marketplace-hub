@@ -47,7 +47,20 @@ def create_app(config_object=Config):
         return dt.replace(tzinfo=timezone.utc).astimezone(settings.tz()).strftime(fmt)
 
     with app.app_context():
+        import os
+        for sub in ("images", "audio", "chat_images"):
+            os.makedirs(os.path.join(app.root_path, "static", "uploads", sub), exist_ok=True)
         db.create_all()
+        try:
+            from sqlalchemy import text
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE message ADD COLUMN IF NOT EXISTS audio_path VARCHAR(255)"))
+                conn.execute(text("ALTER TABLE message ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50)"))
+                conn.execute(text("ALTER TABLE message ADD COLUMN IF NOT EXISTS image_path VARCHAR(255)"))
+                conn.execute(text("ALTER TABLE message ADD COLUMN IF NOT EXISTS image_mime VARCHAR(50)"))
+                conn.commit()
+        except Exception:
+            pass
         from .services import settings
         settings.ensure_agent_key()
 

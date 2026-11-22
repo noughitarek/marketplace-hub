@@ -1,14 +1,17 @@
 """Gemini REST client + answer generation with a DB cache."""
+import base64
 import hashlib
 import json
+import os
 import re
 import time
 from datetime import timedelta
 
 import requests
+from flask import current_app
 
 from ..extensions import db
-from ..models import AICache, AIResponse, Conversation, Product, utcnow
+from ..models import AICache, AIResponse, Conversation, ImageAsset, Product, utcnow
 from . import settings
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -52,61 +55,152 @@ def _call(model, system, contents, temperature, json_mode=False, max_tokens=2048
 
 
 def _to_contents(messages):
-    """[(sender, text)] -> Gemini contents: merged same-role turns, starting and ending with 'user'."""
+    """List of Message objects -> Gemini contents with multimodal audio/image support."""
     contents = []
-    for sender, text in messages:
-        role = "user" if sender == "customer" else "model"
+    static_folder = os.path.join(current_app.root_path, "static")
+
+    for m in messages:
+        role = "user" if m.sender == "customer" else "model"
+        parts = []
+
+        # Customer sent image
+        if getattr(m, "image_path", None):
+            full_path = os.path.join(static_folder, m.image_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as f:
+                        img_b64 = base64.b64encode(f.read()).decode("ascii")
+                    mime = getattr(m, "image_mime", None) or "image/jpeg"
+                    parts.append({"inlineData": {"mimeType": mime, "data": img_b64}})
+                except Exception:
+                    pass
+
+        # Customer sent audio / voice note
+        if getattr(m, "audio_path", None):
+            full_path = os.path.join(static_folder, m.audio_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, "rb") as f:
+                        aud_b64 = base64.b64encode(f.read()).decode("ascii")
+                    mime = getattr(m, "audio_mime", None) or "audio/mp4"
+                    parts.append({"inlineData": {"mimeType": mime, "data": aud_b64}})
+                except Exception:
+                    pass
+
+        # Text
+        text = (m.text or "").strip()
+        if text:
+            parts.append({"text": text})
+        elif not parts:
+            if getattr(m, "audio_path", None):
+                parts.append({"text": "(Customer voice message)"})
+            elif getattr(m, "image_path", None):
+                parts.append({"text": "(Customer image)"})
+
+        if not parts:
+            continue
+
         if contents and contents[-1]["role"] == role:
-            contents[-1]["parts"][0]["text"] += "\n" + text
+            contents[-1]["parts"].extend(parts)
         else:
-            contents.append({"role": role, "parts": [{"text": text}]})
+            contents.append({"role": role, "parts": parts})
+
     if contents and contents[0]["role"] == "model":
         contents.insert(0, {"role": "user", "parts": [{"text": "(start of conversation)"}]})
     return contents
 
 
-def catalog_text():
-    cur = settings.get("currency")
-    lines = []
-    for p in Product.query.filter_by(active=True).order_by(Product.name).all():
-        stock = "in stock" if (p.stock_qty or 0) > 0 else "OUT OF STOCK"
-        desc = f" - {p.description.strip()[:300]}" if p.description else ""
-        lines.append(f"* {p.name}: {p.price} {cur} ({stock}){desc}")
-    return "\n".join(lines) or "(no products configured)"
+def build_system_prompt(worker, conv=None):
+    """Returns 1 full prompt set by user: worker account prompt overrides global prompt. No extra/hidden instructions."""
+    account_prompt = (worker.custom_prompt or "").strip() if worker else ""
+    if account_prompt:
+        return account_prompt
+    global_prompt = (settings.get("global_prompt") or "").strip()
+    if global_prompt:
+        return global_prompt
+    return "You are a helpful sales assistant answering Facebook Marketplace messages."
 
 
-def build_system_prompt(worker, conv):
-    parts = [
-        f"You are the sales assistant of \"{settings.get('business_name')}\", answering Facebook Marketplace "
-        f"messages on behalf of the seller.",
-        settings.get("business_description"),
-        "STYLE: " + settings.get("reply_style"),
-        "DELIVERY: " + settings.get("delivery_info"),
-        "CATALOGUE (only sell what is listed; prices are final unless stated):\n" + catalog_text(),
-        "TO CLOSE A SALE collect: full name, phone number, wilaya, commune and address. "
-        "Ask only for what is still missing. Confirm the product, quantity and total price.",
-        f"Output ONLY the message to send to the customer, as plain text, no markdown. "
-        f"If no answer is needed (e.g. the customer only says thanks/ok), output exactly {NO_REPLY}.",
-    ]
-    if conv.item_title:
-        parts.append(f"The customer is messaging about this listing: \"{conv.item_title}\".")
-    if worker.custom_prompt:
-        parts.append("ADDITIONAL SELLER INSTRUCTIONS:\n" + worker.custom_prompt)
-    return "\n\n".join(p for p in parts if p)
+def parse_response_actions(response_text):
+    """
+    Scans response_text for image keywords (e.g. %%image1%%).
+    Returns (clean_text, sequence) where sequence is ordered list of text and image actions:
+    e.g. [{"type": "text", "text": "Hi how are you"}, {"type": "image", "keyword": "image1", ...}]
+    """
+    if not response_text:
+        return "", []
+
+    assets = ImageAsset.query.all()
+    if not assets:
+        return response_text.strip(), [{"type": "text", "text": response_text.strip()}] if response_text.strip() else []
+
+    matches = []
+    for img in assets:
+        clean_kw = img.clean_keyword
+        raw_kw = (img.keyword or "").strip()
+        patterns = [
+            rf"%%{re.escape(clean_kw)}%%",
+            rf"{{{{{re.escape(clean_kw)}}}}}",
+        ]
+        if raw_kw and raw_kw != clean_kw:
+            patterns.append(re.escape(raw_kw))
+        combined = "|".join(patterns)
+        for m in re.finditer(combined, response_text, flags=re.IGNORECASE):
+            matches.append((m.start(), m.end(), img))
+
+    if not matches:
+        return response_text.strip(), [{"type": "text", "text": response_text.strip()}] if response_text.strip() else []
+
+    # Sort matches by position and resolve any overlaps
+    matches.sort(key=lambda x: x[0])
+    non_overlapping = []
+    last_end = 0
+    for start, end, img in matches:
+        if start >= last_end:
+            non_overlapping.append((start, end, img))
+            last_end = end
+
+    sequence = []
+    clean_parts = []
+    last_idx = 0
+
+    for start, end, img in non_overlapping:
+        text_before = response_text[last_idx:start]
+        if text_before.strip():
+            sequence.append({"type": "text", "text": text_before.strip()})
+            clean_parts.append(text_before.strip())
+
+        sequence.append({
+            "type": "image",
+            "keyword": img.clean_keyword,
+            "image_id": img.id,
+            "filename": img.filename,
+            "url": f"/static/uploads/images/{img.filename}",
+        })
+        last_idx = end
+
+    text_after = response_text[last_idx:]
+    if text_after.strip():
+        sequence.append({"type": "text", "text": text_after.strip()})
+        clean_parts.append(text_after.strip())
+
+    clean_text = " ".join(clean_parts).strip()
+    return clean_text, sequence
 
 
 def generate_answer(worker, conv, force=False):
     """Generate (or fetch from cache) a reply for the conversation's current state."""
     limit = settings.get_int("ai_history_limit", 30)
-    history = [(m.sender, m.text) for m in conv.messages if (m.text or "").strip()][-limit:]
-    if not history or history[-1][0] != "customer":
+    # Include messages that have text, audio, or image
+    valid_msgs = [m for m in conv.messages if (m.text or "").strip() or m.audio_path or m.image_path][-limit:]
+    if not valid_msgs or valid_msgs[-1].sender != "customer":
         raise GeminiError("The last message is not from the customer; nothing to answer.")
-    last_msg = next(m for m in reversed(conv.messages) if m.sender == "customer")
+    last_msg = next(m for m in reversed(valid_msgs) if m.sender == "customer")
 
     model = worker.model_override or settings.get("gemini_model")
     temperature = worker.temperature if worker.temperature is not None else settings.get_float("gemini_temperature", 0.6)
     system = build_system_prompt(worker, conv)
-    contents = _to_contents(history)
+    contents = _to_contents(valid_msgs)
     request_blob = json.dumps({"model": model, "t": temperature, "system": system, "contents": contents},
                               ensure_ascii=False, sort_keys=True)
     cache_key = hashlib.sha256(request_blob.encode()).hexdigest()

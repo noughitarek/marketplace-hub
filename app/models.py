@@ -162,9 +162,29 @@ class Message(db.Model):
     uid = db.Column(db.String(80), nullable=False)
     sender = db.Column(db.String(10), nullable=False)         # customer | me | bot
     text = db.Column(db.Text, default="")
+    audio_path = db.Column(db.String(255))
+    audio_mime = db.Column(db.String(50))
+    image_path = db.Column(db.String(255))
+    image_mime = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
     phone_scanned = db.Column(db.Boolean, default=False, index=True)
     phones = db.Column(db.JSON)
+
+
+class ImageAsset(db.Model):
+    __tablename__ = "image_asset"
+    id = db.Column(db.Integer, primary_key=True)
+    keyword = db.Column(db.String(100), unique=True, index=True, nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    original_filename = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    @property
+    def clean_keyword(self):
+        k = (self.keyword or "").strip()
+        if k.startswith("%%") and k.endswith("%%") and len(k) > 4:
+            return k[2:-2].strip()
+        return k
 
 
 class AICache(db.Model):

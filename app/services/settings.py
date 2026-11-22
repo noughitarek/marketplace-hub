@@ -11,6 +11,10 @@ DEFAULTS = {
     "timezone": "Africa/Algiers",
     "default_shipping_fee": "0",
     # assistant persona
+    "global_prompt": "You are a sales assistant answering Facebook Marketplace messages. "
+                     "Reply in the customer's language (Algerian Darija, Arabic, or French). "
+                     "Be warm, concise, and direct. Help the customer place their order.\n"
+                     "To send a picture of an item or details, write its keyword like %%keyword%% in your message.",
     "business_description": "We sell quality products on Facebook Marketplace.",
     "reply_style": "Reply in the customer's language (Algerian Darija, Arabic or French). "
                    "Be short, warm and direct. Never invent prices, stock or delivery promises.",

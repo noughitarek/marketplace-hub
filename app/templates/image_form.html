@@ -1,0 +1,43 @@
+{% extends "base.html" %}{% block title %}{{ 'Edit image' if img else 'Upload new image' }}{% endblock %}
+{% block content %}
+<div class="head">
+  <div>
+    <h1>{{ 'Edit image: ' + img.keyword if img else 'Upload new image' }}</h1>
+    <div class="sub">Keyword-triggered image</div>
+  </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="card" style="max-width:600px">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  <div class="f">
+    <label for="keyword">Keyword</label>
+    <input id="keyword" name="keyword" value="{{ img.keyword if img else '' }}" placeholder="e.g. image1, catalogue, montre_noire" required autofocus>
+    <div class="small muted">
+      In your prompt or assistant instructions, reference this keyword as <code>%%keyword%%</code> (e.g. <code>%%image1%%</code>).
+    </div>
+  </div>
+
+  <div class="f">
+    <label for="file">Image picture file {{ '(leave empty to keep current)' if img else '' }}</label>
+    <input id="file" type="file" name="file" accept="image/*" {{ '' if img else 'required' }}>
+  </div>
+
+  {% if img %}
+  <div class="f">
+    <label>Current picture</label>
+    <div style="margin-top:6px">
+      <a href="{{ url_for('static', filename='uploads/images/' + img.filename) }}" target="_blank" rel="noopener">
+        <img src="{{ url_for('static', filename='uploads/images/' + img.filename) }}" alt="{{ img.keyword }}" style="max-width:240px;max-height:240px;border-radius:6px;border:1px solid var(--line);display:block">
+      </a>
+      <div class="small muted" style="margin-top:4px">{{ img.original_filename or img.filename }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="actions" style="margin-top:20px">
+    <button class="btn primary">{{ 'Save changes' if img else 'Upload image' }}</button>
+    <a class="btn" href="{{ url_for('web.images') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

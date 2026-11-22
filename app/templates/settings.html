@@ -23,9 +23,9 @@
 <div class="row"><div class="f"><label for="ct">Cache answers for (hours)</label><input id="ct" type="number" name="ai_cache_ttl_hours" value="{{ s.ai_cache_ttl_hours }}"></div>
 <div class="f"><label for="hl">Messages sent as context</label><input id="hl" type="number" name="ai_history_limit" value="{{ s.ai_history_limit }}"></div>
 <div class="f"><label for="ae">Pre-fill auto orders with AI</label><select id="ae" name="auto_extract_with_ai"><option value="1" {{ 'selected' if s.auto_extract_with_ai=='1' }}>Yes</option><option value="0" {{ 'selected' if s.auto_extract_with_ai!='1' }}>No</option></select></div></div>
-<div class="f"><label for="bd">What you sell / who you are</label><textarea id="bd" name="business_description">{{ s.business_description }}</textarea></div>
-<div class="f"><label for="rs">Reply style</label><textarea id="rs" name="reply_style">{{ s.reply_style }}</textarea></div>
-<div class="f"><label for="di">Delivery and payment information</label><textarea id="di" name="delivery_info">{{ s.delivery_info }}</textarea></div></div>
+<div class="f"><label for="gp">Global Assistant Prompt (1 full prompt set by you)</label>
+<textarea id="gp" name="global_prompt" style="min-height:180px">{{ s.global_prompt }}</textarea>
+<div class="small muted">This full prompt is passed directly to Gemini with no slicing, hidden instructions, or product catalogue injection. If a worker account configures its own prompt in Message workers, that account prompt completely overrides this global prompt. To trigger an image, reference its keyword like <code>%%keyword%%</code> (e.g. <code>%%image1%%</code>).</div></div></div>
 
 <div class="card"><h2>Background tasks</h2><div class="row">
 <div class="f"><label for="ps">Look for new phone numbers every (minutes)</label><input id="ps" type="number" min="1" name="phone_scan_minutes" value="{{ s.phone_scan_minutes }}"></div>

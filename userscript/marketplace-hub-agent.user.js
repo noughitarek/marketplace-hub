@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @connect      *
 // @noframes
 // @run-at       document-idle
@@ -28,14 +29,11 @@
   const CFG = {
     MAX_ROWS_SCANNED: 30, // newest N Marketplace chats looked at per cycle
     MAX_THREADS_PER_CYCLE: 8, // chats actually opened per cycle
-    FAILED_RETRY_MS: 10 * 60 * 1000,
+    FAILED_RETRY_MS: 1 * 1000, // retry failed threads after 15s (no 10min block)
     // After clicking the "Marketplace" folder, wait this long (ms) for Facebook to load the Marketplace chat list.
     AFTER_FOLDER_CLICK_MS: 3500,
     // Then keep waiting up to this long (ms) until at least one chat row appears.
     LIST_LOAD_TIMEOUT_MS: 10000,
-    // Unanswered chats that could not be answered yet (replies off, server said "no reply needed", ...)
-    // are re-opened and re-checked after this delay even if the sidebar preview did not change.
-    RECHECK_MS: 5 * 60 * 1000,
     // Facebook shows "Marketplace" as a folder row in the chat list; clicking it opens the Marketplace-only list.
     // Add your language here if your Facebook is not English/French/Arabic.
     MARKETPLACE_RE: /marketplace|marché|ماركت|السوق/i,
@@ -82,14 +80,11 @@
   };
   CFG.DEBUG = !!GM_getValue("debug", false);
 
-  // Memory of chats already looked at: { sig, at, final }.
-  //  final = true  -> nothing left to do until the sidebar preview changes (last message is yours, reply drafted/sent)
-  //  final = false -> still unanswered; checked again after CFG.RECHECK_MS even if the preview is identical
-  // Facebook's own "unread / seen" flag is never used: a chat counts as unanswered when the last message is the buyer's.
+  // Memory of chats already handled: { sig, at, final }
   const isFresh = (id, sig) => {
     const e = state.sigs[id];
-    if (!e || typeof e !== "object" || e.sig !== sig) return false; // old string entries from earlier versions are re-checked once
-    return e.final || Date.now() - e.at < CFG.RECHECK_MS;
+    if (!e || typeof e !== "object" || e.sig !== sig) return false;
+    return !!e.final;
   };
   const remember = (id, sig, final, note) => {
     state.sigs[id] = {
@@ -169,6 +164,57 @@
     });
   }
 
+  function fetchBlob(url) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        responseType: "blob",
+        timeout: 30000,
+        headers: { "X-API-Key": apiKey() },
+        onload: (r) => {
+          if (r.status >= 200 && r.status < 300 && r.response) {
+            resolve(r.response);
+          } else {
+            resolve(null);
+          }
+        },
+        onerror: () => resolve(null),
+        ontimeout: () => resolve(null),
+      });
+    });
+  }
+
+  const mediaCache = new Map();
+  function fetchBase64(url) {
+    if (!url) return Promise.resolve(null);
+    if (mediaCache.has(url)) return Promise.resolve(mediaCache.get(url));
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        responseType: "blob",
+        timeout: 25000,
+        onload: (r) => {
+          if (r.status >= 200 && r.status < 300 && r.response) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const res = { data: reader.result, mime: r.response.type || "" };
+              mediaCache.set(url, res);
+              resolve(res);
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(r.response);
+          } else {
+            resolve(null);
+          }
+        },
+        onerror: () => resolve(null),
+        ontimeout: () => resolve(null),
+      });
+    });
+  }
+
   /* ------------------------------ Facebook DOM ------------------------ */
   const norm = (str) =>
     (str || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -207,6 +253,264 @@
           new MouseEvent(type, { bubbles: true, cancelable: true }),
         ),
     );
+  }
+
+  /* --- Voice Message & Image extraction helpers --- */
+  function injectMainWorldScript() {
+    if (document.getElementById("mh-audio-hook")) return;
+    try {
+      const nonce =
+        document.querySelector("script[nonce]")?.getAttribute("nonce") || "";
+      const s = document.createElement("script");
+      s.id = "mh-audio-hook";
+      if (nonce) s.setAttribute("nonce", nonce);
+      s.textContent = `
+(function() {
+  window.__MH_AUDIO_CACHE = window.__MH_AUDIO_CACHE || new Map();
+  window.__MH_LAST_AUDIO = null;
+  window.__MH_SILENT_CAPTURE = false;
+
+  const origAudio = window.Audio;
+  if (origAudio) {
+    window.Audio = function(src) {
+      const a = new origAudio(src);
+      if (src && typeof src === "string") window.__MH_LAST_AUDIO = src;
+      return a;
+    };
+    window.Audio.prototype = origAudio.prototype;
+  }
+
+  if (window.HTMLAudioElement && HTMLAudioElement.prototype) {
+    const origPlay = HTMLAudioElement.prototype.play;
+    HTMLAudioElement.prototype.play = function() {
+      const src = this.currentSrc || this.src;
+      if (src) window.__MH_LAST_AUDIO = src;
+      if (window.__MH_SILENT_CAPTURE) {
+        try { this.muted = true; this.pause(); } catch(e){}
+        return Promise.resolve();
+      }
+      return origPlay.apply(this, arguments);
+    };
+  }
+
+  function isLikelyAudio(str) {
+    if (typeof str !== "string" || !str) return false;
+    const s = str.toLowerCase();
+    if (!s.startsWith("http://") && !s.startsWith("https://") && !s.startsWith("blob:")) return false;
+    if (s.includes("audioclip")) return true;
+    if (/\\.(mp4|m4a|aac|mp3|ogg)(\\?|$)/.test(s)) return true;
+    if (s.includes("fbsbx.com") && (s.includes("audio") || s.includes("/v/t") || s.includes("bytestream"))) return true;
+    if (s.includes("fbcdn.net") && (s.includes("audio") || s.includes("audioclip"))) return true;
+    return false;
+  }
+
+  function crawl(obj, visited = new Set(), depth = 0) {
+    if (!obj || depth > 8 || visited.has(obj)) return null;
+    if (typeof obj === "string") return isLikelyAudio(obj) ? obj : null;
+    if (typeof obj !== "object" && typeof obj !== "function") return null;
+    visited.add(obj);
+
+    const keys = ["playable_url", "playableUrl", "playable_url_quality_hd", "audio_src", "audioSrc", "audio_url", "audioUrl", "src", "uri", "url"];
+    for (const k of keys) {
+      try {
+        const v = obj[k];
+        if (typeof v === "string" && isLikelyAudio(v)) return v;
+      } catch(e) {}
+    }
+
+    if (obj.memoizedProps) {
+      const r = crawl(obj.memoizedProps, visited, depth + 1);
+      if (r) return r;
+    }
+    if (obj.pendingProps) {
+      const r = crawl(obj.pendingProps, visited, depth + 1);
+      if (r) return r;
+    }
+    if (obj.stateNode && typeof obj.stateNode === "object") {
+      const r = crawl(obj.stateNode, visited, depth + 1);
+      if (r) return r;
+    }
+    if (obj.memoizedState) {
+      const r = crawl(obj.memoizedState, visited, depth + 1);
+      if (r) return r;
+    }
+
+    try {
+      for (const k of Object.keys(obj)) {
+        if (k === "stateNode" || k === "window" || k === "document" || k === "children") continue;
+        const v = obj[k];
+        if (typeof v === "string" && isLikelyAudio(v)) return v;
+        if (typeof v === "object" && v !== null && depth < 5) {
+          const r = crawl(v, visited, depth + 1);
+          if (r) return r;
+        }
+      }
+    } catch(e) {}
+    return null;
+  }
+
+  window.__MH_GET_AUDIO = function(msgId) {
+    if (!msgId) return null;
+    if (window.__MH_AUDIO_CACHE.has(msgId)) return window.__MH_AUDIO_CACHE.get(msgId);
+    const msgEl = document.querySelector('[data-message-id="' + msgId + '"]');
+    if (!msgEl) return null;
+
+    const aud = msgEl.querySelector("audio");
+    if (aud && (aud.currentSrc || aud.src)) {
+      const src = aud.currentSrc || aud.src;
+      window.__MH_AUDIO_CACHE.set(msgId, src);
+      return src;
+    }
+    const alink = msgEl.querySelector('a[href*=".mp4"], a[href*=".m4a"], a[href*=".aac"], a[href*="audioclip"]');
+    if (alink && alink.href) {
+      window.__MH_AUDIO_CACHE.set(msgId, alink.href);
+      return alink.href;
+    }
+
+    const targets = [
+      msgEl.querySelector('[aria-label="Play"], [aria-label="Pause"], [aria-label*="Audio scrubber"], [role="slider"], [role="timer"]'),
+      msgEl
+    ].filter(Boolean);
+
+    for (const t of targets) {
+      for (const prop in t) {
+        if (prop.startsWith("__reactFiber") || prop.startsWith("__reactProps") || prop.startsWith("__reactInternalInstance")) {
+          let curr = t[prop];
+          let steps = 0;
+          while (curr && steps < 15) {
+            const found = crawl(curr.memoizedProps) || crawl(curr.memoizedState);
+            if (found) {
+              window.__MH_AUDIO_CACHE.set(msgId, found);
+              return found;
+            }
+            if (curr.child) {
+              const cf = crawl(curr.child.memoizedProps);
+              if (cf) {
+                window.__MH_AUDIO_CACHE.set(msgId, cf);
+                return cf;
+              }
+            }
+            curr = curr.return;
+            steps++;
+          }
+        }
+      }
+    }
+    return null;
+  };
+
+  window.__MH_TRIGGER_AUDIO = async function(msgId) {
+    const msgEl = document.querySelector('[data-message-id="' + msgId + '"]');
+    if (!msgEl) return null;
+    const playBtn = msgEl.querySelector('[aria-label="Play"], div[role="button"][aria-label*="Play"]');
+    if (!playBtn) return null;
+
+    window.__MH_SILENT_CAPTURE = true;
+    window.__MH_LAST_AUDIO = null;
+    try {
+      ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(type =>
+        playBtn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
+      );
+      await new Promise(r => setTimeout(r, 250));
+    } finally {
+      window.__MH_SILENT_CAPTURE = false;
+    }
+
+    const audios = document.querySelectorAll("audio");
+    for (const a of audios) {
+      try { a.muted = true; a.pause(); } catch(e){}
+    }
+
+    const captured = window.__MH_LAST_AUDIO || window.__MH_GET_AUDIO(msgId);
+    if (captured) window.__MH_AUDIO_CACHE.set(msgId, captured);
+    return captured;
+  };
+})();
+`;
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) {}
+  }
+
+  function isVoiceMessageElement(el) {
+    if (!el) return false;
+    if (el.querySelector("audio")) return true;
+    if (
+      el.querySelector(
+        '[aria-label="Play"], [aria-label="Pause"], [aria-label*="Audio scrubber"], [role="slider"][aria-label*="Audio"], [role="timer"]',
+      )
+    )
+      return true;
+    if (el.querySelector('svg path[d*="M10 25.5v-15"]')) return true;
+    return false;
+  }
+
+  function extractChatImage(el, customerName) {
+    if (!el) return null;
+
+    // 1. Messenger media link wrapper (<a href="/messenger_media/..." or attachment_id)
+    const mediaLink = el.querySelector(
+      'a[href*="/messenger_media/"], a[href*="attachment_id="], a[aria-label*="photo" i], a[aria-label*="image" i]',
+    );
+    if (mediaLink) {
+      const img = mediaLink.querySelector("img");
+      if (img && img.src && !img.src.includes("/emoji.php")) {
+        return img.src;
+      }
+    }
+
+    // 2. Explicit photo attachment images (alt starts with "Open photo" or "Photo")
+    const photoImgs = el.querySelectorAll(
+      'img[alt^="Open photo" i], img[alt^="Photo" i], img[alt^="Image" i]',
+    );
+    for (const img of photoImgs) {
+      if (img.src && !img.src.includes("/emoji.php")) {
+        return img.src;
+      }
+    }
+
+    // 3. Fallback: check all images, strictly rejecting avatars, icons, receipts
+    const allImgs = el.querySelectorAll("img");
+    const cName = (customerName || "").trim().toLowerCase();
+    for (const img of allImgs) {
+      const src = img.src || "";
+      const alt = (img.alt || "").trim().toLowerCase();
+      const style = (img.getAttribute("style") || "").toLowerCase();
+
+      // Skip emojis, icons, loading gifs
+      if (!src || src.includes("/emoji.php") || src.includes("rsrc.php"))
+        continue;
+
+      // Skip profile pictures / avatars (FB uses /t39.30808-1/ and circular border-radius)
+      if (
+        src.includes("/t39.30808-1/") ||
+        src.includes("dst-jpg_s100x100") ||
+        src.includes("dst-jpg_s50x50") ||
+        src.includes("dst-jpg_s60x60") ||
+        src.includes("dst-jpg_s75x75") ||
+        src.includes("dst-jpg_s32x32")
+      )
+        continue;
+      if (
+        style.includes("border-radius: 50%") ||
+        style.includes("border-radius:50%") ||
+        style.includes("border-radius: 9999px")
+      )
+        continue;
+      if (alt.startsWith("seen by") || (cName && alt === cName)) continue;
+      if (
+        img.closest(
+          '.xgd8bvy, [aria-label*="seen by" i], [aria-label*="profile" i]',
+        )
+      )
+        continue;
+
+      const w = img.naturalWidth || img.width || 0;
+      if (w > 0 && w <= 50 && !src.includes("/t1.15752-")) continue;
+
+      return src;
+    }
+
+    return null;
   }
 
   /* --- step 1: get into the Marketplace-only list --- */
@@ -317,7 +621,7 @@
     return m ? m[1].trim() : null;
   }
 
-  function scrapeOpenThread(row) {
+  async function scrapeOpenThread(row) {
     const log = document.querySelector(CFG.SELECTORS.log);
     if (!log) return null;
     const sepAt = row.title.indexOf(" · ");
@@ -328,14 +632,93 @@
     const logRect = log.getBoundingClientRect();
     const seen = new Set(),
       messages = [];
-    log.querySelectorAll(CFG.SELECTORS.message).forEach((el) => {
+    const msgEls = [...log.querySelectorAll(CFG.SELECTORS.message)];
+
+    for (const el of msgEls) {
       const uid = (el.getAttribute("data-message-id") || "").slice(0, 80);
-      if (!uid || seen.has(uid)) return;
+      if (!uid || seen.has(uid)) continue;
       seen.add(uid);
+
       const text = bodyOf(el);
-      if (!text) return;
-      messages.push({ uid, sender: senderOf(el, customerName, logRect), text });
-    });
+      const sender = senderOf(el, customerName, logRect);
+      const isVoice = isVoiceMessageElement(el);
+
+      // 1. Detect Audio / Voice Message
+      let audioSrc = null;
+      if (isVoice) {
+        if (
+          typeof unsafeWindow !== "undefined" &&
+          unsafeWindow.__MH_GET_AUDIO
+        ) {
+          try {
+            audioSrc = unsafeWindow.__MH_GET_AUDIO(uid);
+          } catch (e) {}
+        }
+        if (
+          !audioSrc &&
+          typeof unsafeWindow !== "undefined" &&
+          unsafeWindow.__MH_TRIGGER_AUDIO
+        ) {
+          try {
+            audioSrc = await unsafeWindow.__MH_TRIGGER_AUDIO(uid);
+          } catch (e) {}
+        }
+        if (!audioSrc) {
+          const audioEl = el.querySelector(
+            "audio, [data-testid*='audio'] audio",
+          );
+          if (audioEl) audioSrc = audioEl.currentSrc || audioEl.src;
+        }
+        if (!audioSrc) {
+          const audioLink = el.querySelector(
+            "a[href*='.mp4'], a[href*='.m4a'], a[href*='.ogg'], a[href*='.aac'], a[href*='.mp3'], a[href*='audioclip']",
+          );
+          if (audioLink) audioSrc = audioLink.href;
+        }
+      }
+
+      // 2. Detect Image (strictly excluding avatars)
+      const imageSrc = extractChatImage(el, customerName);
+
+      if (!text && !audioSrc && !imageSrc && !isVoice) continue;
+
+      let audioData = null,
+        audioMime = null;
+      if (audioSrc && sender === "customer") {
+        const res = await fetchBase64(audioSrc);
+        if (res) {
+          audioData = res.data;
+          audioMime = res.mime || "audio/mp4";
+        }
+      }
+
+      let imageData = null,
+        imageMime = null;
+      if (imageSrc && sender === "customer") {
+        const res = await fetchBase64(imageSrc);
+        if (res) {
+          imageData = res.data;
+          imageMime = res.mime || "image/jpeg";
+        }
+      }
+
+      const finalText =
+        text ||
+        (isVoice || audioSrc ? "(Voice message)" : imageSrc ? "(Image)" : "");
+
+      messages.push({
+        uid,
+        sender,
+        text: finalText,
+        audio_data: audioData,
+        audio_mime: audioMime,
+        audio_url: audioSrc,
+        image_data: imageData,
+        image_mime: imageMime,
+        image_url: imageSrc,
+      });
+    }
+
     const prof = log.querySelector(CFG.SELECTORS.buyerProfile);
     const customerId = prof
       ? ((prof.getAttribute("href") || "").match(/profile\/(\d+)/) || [])[1] ||
@@ -367,7 +750,7 @@
     const end = Date.now() + 5000;
     while (Date.now() < end && stable < 2) {
       await sleep(450);
-      snap = scrapeOpenThread(row);
+      snap = await scrapeOpenThread(row);
       const n = snap ? snap.messages.length : -1;
       stable = n === last ? stable + 1 : 0;
       last = n;
@@ -377,10 +760,68 @@
 
   /* ------------------------------ writing replies --------------------- */
   const composer = () => document.querySelector(CFG.SELECTORS.composer);
+  const hasComposerAttachment = () => {
+    return !!document.querySelector(
+      'div[aria-label*="Remove" i], div[aria-label*="remove" i], button[aria-label*="remove" i], [aria-label*="Supprimer" i], [aria-label*="إزالة" i], div[role="presentation"] img[src^="blob:"], [data-testid*="media_preview"]',
+    );
+  };
   const composerEmpty = () => {
     const c = composer();
-    return !c || !(c.innerText || "").trim();
+    return !c || (!(c.innerText || "").trim() && !hasComposerAttachment());
   };
+
+  async function attachImageToComposer(blob, filename) {
+    const box = composer();
+    if (!box) return false;
+    const file = new File([blob], filename || "image.jpg", {
+      type: blob.type || "image/jpeg",
+    });
+    let attached = false;
+
+    // 1. Try file input element first
+    const fileInputs = document.querySelectorAll(
+      'input[type="file"][accept*="image"], input[type="file"]',
+    );
+    for (const inp of fileInputs) {
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        inp.files = dt.files;
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+        attached = true;
+        break;
+      } catch (e) {
+        log("fileInput dispatch error", e);
+      }
+    }
+
+    if (attached) {
+      // Allow Facebook a moment to process the file input change event
+      await sleep(800);
+    }
+
+    // 2. Only fallback to clipboard paste if file input was missing or failed to show preview
+    if (!attached || !hasComposerAttachment()) {
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        box.focus();
+        const pasteEv = new ClipboardEvent("paste", {
+          clipboardData: dt,
+          bubbles: true,
+          cancelable: true,
+        });
+        box.dispatchEvent(pasteEv);
+        attached = true;
+      } catch (e) {
+        log("paste dispatch error", e);
+      }
+      await sleep(800);
+    }
+
+    await sleep(1000);
+    return attached;
+  }
 
   async function typeReply(text) {
     const box = composer();
@@ -456,7 +897,13 @@
       );
       return false;
     }
-    if (g.skip || !g.reply) {
+    const seq =
+      g.sequence && g.sequence.length
+        ? g.sequence
+        : g.reply
+          ? [{ type: "text", text: g.reply }]
+          : [];
+    if (g.skip || !seq.length) {
       await api("POST", `/answers/${g.response_id}/result`, {
         status: "skipped",
       });
@@ -466,52 +913,79 @@
       `answer ready for ${snap.customerName} (${g.cached ? "cache" : "new"})`,
       "info",
     );
+    // Wait configured delay before sending
     await sleep(rand(cfg.delay_min, cfg.delay_max) * 1000);
-    // the view may have changed, or you may have answered manually, while we waited.
-    // A new customer message is fine (buyers often send several short messages in a row): the reply still applies.
-    const now = scrapeOpenThread(row);
+
+    const now = await scrapeOpenThread(row);
     const lastNow = now && now.messages[now.messages.length - 1];
     if (!lastNow || lastNow.sender !== "customer") {
       state.note =
         "the last message is no longer from the buyer when the reply was ready";
       return false;
     }
-    const typed = await typeReply(g.reply);
-    if (typed !== "ok") {
-      state.failedAt[row.id] = Date.now();
-      state.note =
-        "typing the reply failed: " +
-        typed +
-        (typed === "composer_busy"
-          ? " (an unsent draft is already in the message box)"
-          : "");
-      await api("POST", `/answers/${g.response_id}/result`, {
-        status: "failed",
-        error: typed,
-      });
-      return false;
-    }
-    if (cfg.reply_mode === "auto") {
-      await sleep(rand(700, 1600));
-      const sent = await pressSend();
-      await api(
-        "POST",
-        `/answers/${g.response_id}/result`,
-        sent
-          ? { status: "sent" }
-          : { status: "failed", error: "send_not_confirmed" },
-      );
-      if (!sent) {
-        state.failedAt[row.id] = Date.now();
-        state.note = "reply typed but sending was not confirmed";
-        return false;
+
+    let allSent = true;
+    for (let i = 0; i < seq.length; i++) {
+      const item = seq[i];
+      if (item.type === "image") {
+        setStatus(`Sending image ${item.keyword || item.filename}…`, "info");
+        const blob = await fetchBlob(server() + item.url);
+        if (blob) {
+          await attachImageToComposer(blob, item.filename);
+          if (cfg.reply_mode === "auto") {
+            await sleep(rand(1200, 2000));
+            const sent = await pressSend();
+            if (!sent) {
+              allSent = false;
+              break;
+            }
+            await sleep(rand(1000, 2000));
+          }
+        } else {
+          log("failed to load image blob", item.url);
+        }
+      } else if (item.type === "text" && item.text && item.text.trim()) {
+        setStatus(`Typing reply (${i + 1}/${seq.length})…`, "info");
+        const typed = await typeReply(item.text.trim());
+        if (typed !== "ok") {
+          state.failedAt[row.id] = Date.now();
+          state.note = "typing reply failed: " + typed;
+          await api("POST", `/answers/${g.response_id}/result`, {
+            status: "failed",
+            error: typed,
+          });
+          return false;
+        }
+        if (cfg.reply_mode === "auto") {
+          await sleep(rand(700, 1600));
+          const sent = await pressSend();
+          if (!sent) {
+            allSent = false;
+            state.failedAt[row.id] = Date.now();
+            state.note = "reply typed but sending was not confirmed";
+            await api("POST", `/answers/${g.response_id}/result`, {
+              status: "failed",
+              error: "send_not_confirmed",
+            });
+            return false;
+          }
+          await sleep(rand(1000, 2000));
+        }
       }
+    }
+
+    if (cfg.reply_mode === "auto") {
+      await api("POST", `/answers/${g.response_id}/result`, {
+        status: allSent ? "sent" : "failed",
+        error: allSent ? null : "send_part_failed",
+      });
+      return allSent ? "replied" : false;
     } else {
       await api("POST", `/answers/${g.response_id}/result`, {
         status: "drafted",
       });
+      return "replied";
     }
-    return "replied";
   }
 
   /* ------------------------------ main loop --------------------------- */
@@ -541,11 +1015,8 @@
       else if (isFresh(r.id, r.sig)) {
         const e = state.sigs[r.id];
         why =
-          (e.final
-            ? "skip: already handled, preview unchanged"
-            : "skip: checked recently, preview unchanged (re-check every " +
-              Math.round(CFG.RECHECK_MS / 60000) +
-              " min)") + (e.note ? " | LAST RESULT: " + e.note : "");
+          "skip: already handled for this message" +
+          (e && e.note ? " | " + e.note : "");
       } else if (waitLeft > 0)
         why =
           "skip: failed earlier, retry in " + Math.ceil(waitLeft / 1000) + "s";
@@ -553,7 +1024,7 @@
         why =
           "skip: over the per-cycle limit (" + CFG.MAX_THREADS_PER_CYCLE + ")";
       else {
-        why = "open";
+        why = "open: unanswered conversation";
         todo.push(r);
       }
       decisions[r.id] = {
@@ -582,7 +1053,7 @@
       if (!snap || !snap.messages.length) {
         state.failedAt[t.id] = Date.now();
         d.why =
-          "failed: conversation did not open (title mismatch?) or no messages read, retry in 10 min";
+          "failed: conversation did not open (title mismatch?) or no messages read, retrying shortly";
         continue;
       }
       const last = snap.messages[snap.messages.length - 1];
@@ -648,23 +1119,24 @@
         const outcome = await answerThread(row, snap); // 'replied' | 'skipped' | false
         if (outcome === "replied") {
           answered++;
-          remember(t.id, t.sig, true);
+          remember(t.id, t.sig, true, "replied");
           d.why = "replied (" + state.cfg.reply_mode + ")";
         } else if (outcome === "skipped") {
           d.why = "server chose not to reply; " + srv;
-          remember(t.id, t.sig, false, d.why);
-        } // look again later
-        else
+          remember(t.id, t.sig, true, d.why);
+        } else {
           d.why =
             "reply failed or aborted: " +
             (state.note || "unknown") +
-            " (retry in 10 min)"; // failedAt holds the retry timer
+            " (retrying shortly)";
+          state.failedAt[t.id] = Date.now();
+        }
       } else {
         d.why =
           (r && r.needs_reply
             ? "replies are off in the dashboard; "
             : "server says no reply needed; ") + srv;
-        remember(t.id, t.sig, false, d.why); // synced but not answered (replies off / no reply needed): re-check later
+        remember(t.id, t.sig, true, d.why);
       }
     }
     saveDecisions();
@@ -674,7 +1146,37 @@
     );
   }
 
+  function checkSingleTabLock() {
+    try {
+      const raw = localStorage.getItem("mhub_active_tab");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          parsed.id !== TAB_ID &&
+          Date.now() - parsed.time < 15000
+        ) {
+          return false; // Another tab is active
+        }
+      }
+      localStorage.setItem(
+        "mhub_active_tab",
+        JSON.stringify({ id: TAB_ID, time: Date.now() }),
+      );
+      return true;
+    } catch (e) {
+      return true;
+    }
+  }
+
   async function cycle() {
+    if (!checkSingleTabLock()) {
+      setStatus(
+        "standby: another tab is already running Marketplace Hub Agent",
+        "info",
+      );
+      return;
+    }
     if (!server() || !apiKey()) {
       setStatus(
         "not configured - Tampermonkey menu → Configure server",
@@ -849,5 +1351,6 @@
   });
 
   setStatus("starting…");
+  injectMainWorldScript();
   loop();
 })();

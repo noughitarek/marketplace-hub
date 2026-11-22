@@ -1,10 +1,13 @@
 """JSON API used by the Tampermonkey agent. Auth: header  X-API-Key: <Settings → agent key>."""
+import base64
 import hashlib
 import hmac
+import os
+import re
 from datetime import timedelta
 from functools import wraps
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from ..extensions import db
 from ..models import AIResponse, Conversation, Message, Worker, utcnow
@@ -29,6 +32,42 @@ def require_key(fn):
 
 def _worker(fb_id):
     return db.session.get(Worker, str(fb_id)) if fb_id else None
+
+
+def _save_base64_media(data_str, subfolder, prefix, default_ext="bin"):
+    if not data_str or not isinstance(data_str, str):
+        return None, None
+    mime = None
+    clean_b64 = data_str.strip()
+    if "," in clean_b64 and clean_b64.startswith("data:"):
+        header, clean_b64 = clean_b64.split(",", 1)
+        m = re.search(r"data:([^;]+);", header)
+        if m:
+            mime = m.group(1).strip()
+    try:
+        raw_bytes = base64.b64decode(clean_b64)
+    except Exception:
+        return None, None
+
+    ext = default_ext
+    if mime:
+        m_lower = mime.lower()
+        if "audio/mp4" in m_lower or "m4a" in m_lower: ext = "mp4"
+        elif "audio/ogg" in m_lower or "opus" in m_lower: ext = "ogg"
+        elif "audio/webm" in m_lower: ext = "webm"
+        elif "audio/mpeg" in m_lower or "mp3" in m_lower: ext = "mp3"
+        elif "image/png" in m_lower: ext = "png"
+        elif "image/jpeg" in m_lower or "image/jpg" in m_lower: ext = "jpg"
+        elif "image/webp" in m_lower: ext = "webp"
+        elif "image/gif" in m_lower: ext = "gif"
+
+    fname = f"{prefix}_{hashlib.sha1(raw_bytes).hexdigest()[:16]}.{ext}"
+    rel_path = f"uploads/{subfolder}/{fname}"
+    full_path = os.path.join(current_app.root_path, "static", "uploads", subfolder, fname)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, "wb") as f:
+        f.write(raw_bytes)
+    return rel_path, mime
 
 
 @bp.get("/health")
@@ -70,7 +109,7 @@ def config():
 @require_key
 def sync():
     """Body: {fb_id, conversations:[{thread_id, customer_name, customer_id, url, item_title, item_id,
-              messages:[{uid, sender:'customer'|'me', text}]}]}"""
+              messages:[{uid, sender:'customer'|'me', text, audio_data?, audio_mime?, image_data?, image_mime?}]}]}"""
     d = request.get_json(silent=True) or {}
     w = _worker(d.get("fb_id"))
     if not w:
@@ -80,7 +119,8 @@ def sync():
     results = []
     for c in (d.get("conversations") or [])[:50]:
         tid = str(c.get("thread_id") or "").strip()
-        msgs = [m for m in (c.get("messages") or []) if (m.get("text") or "").strip()]
+        raw_msgs = c.get("messages") or []
+        msgs = [m for m in raw_msgs if (m.get("text") or "").strip() or m.get("audio_data") or m.get("image_data") or m.get("audio_url") or m.get("image_url")]
         if not tid or not msgs:
             continue
         conv = Conversation.query.filter_by(worker_id=w.id, thread_id=tid).first()
@@ -99,14 +139,63 @@ def sync():
             AIResponse.created_at > utcnow() - timedelta(days=2)) if r.response_text}
         new = 0
         for m in msgs:
-            uid = str(m.get("uid") or hashlib.sha1((m.get("sender", "") + m["text"]).encode()).hexdigest())[:80]
+            txt = (m.get("text") or "").strip()
+            raw_hash_seed = (m.get("sender", "") + txt + str(m.get("audio_data") or "")[:20] + str(m.get("image_data") or "")[:20]).encode()
+            uid = str(m.get("uid") or hashlib.sha1(raw_hash_seed).hexdigest())[:80]
             if uid in known:
                 continue
             known.add(uid)
             sender = "customer" if m.get("sender") == "customer" else "me"
-            if sender == "me" and m["text"].strip() in recent_sent:
+            if sender == "me" and txt and txt in recent_sent:
                 sender = "bot"
-            db.session.add(Message(conversation_id=conv.id, uid=uid, sender=sender, text=m["text"]))
+
+            audio_path, audio_mime = None, m.get("audio_mime")
+            if m.get("audio_data"):
+                audio_path, mime_detected = _save_base64_media(m["audio_data"], "audio", f"aud_{conv.id}_{uid[:8]}", "mp4")
+                audio_mime = mime_detected or audio_mime or "audio/mp4"
+            elif m.get("audio_url"):
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(m["audio_url"], headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        raw_bytes = resp.read()
+                        if raw_bytes:
+                            b64 = base64.b64encode(raw_bytes).decode("ascii")
+                            content_type = resp.headers.get_content_type() or "audio/mp4"
+                            audio_path, mime_detected = _save_base64_media(f"data:{content_type};base64,{b64}", "audio", f"aud_{conv.id}_{uid[:8]}", "mp4")
+                            audio_mime = mime_detected or content_type
+                except Exception:
+                    pass
+
+            image_path, image_mime = None, m.get("image_mime")
+            if m.get("image_data"):
+                image_path, mime_detected = _save_base64_media(m["image_data"], "chat_images", f"img_{conv.id}_{uid[:8]}", "jpg")
+                image_mime = mime_detected or image_mime or "image/jpeg"
+            elif m.get("image_url"):
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(m["image_url"], headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        raw_bytes = resp.read()
+                        if raw_bytes:
+                            b64 = base64.b64encode(raw_bytes).decode("ascii")
+                            content_type = resp.headers.get_content_type() or "image/jpeg"
+                            image_path, mime_detected = _save_base64_media(f"data:{content_type};base64,{b64}", "chat_images", f"img_{conv.id}_{uid[:8]}", "jpg")
+                            image_mime = mime_detected or content_type
+                except Exception:
+                    pass
+
+            msg_row = Message(
+                conversation_id=conv.id,
+                uid=uid,
+                sender=sender,
+                text=txt,
+                audio_path=audio_path,
+                audio_mime=audio_mime,
+                image_path=image_path,
+                image_mime=image_mime
+            )
+            db.session.add(msg_row)
             new += 1
         last = msgs[-1]
         conv.last_sender = "customer" if last.get("sender") == "customer" else "me"
@@ -133,7 +222,7 @@ def _sent_last_hour(worker_id):
 @bp.post("/answers/generate")
 @require_key
 def generate():
-    """Body: {fb_id, thread_id, force?:bool}  ->  {reply, response_id, cached, skip}"""
+    """Body: {fb_id, thread_id, force?:bool}  ->  {reply, sequence, response_id, cached, skip}"""
     d = request.get_json(silent=True) or {}
     w = _worker(d.get("fb_id"))
     if not w:
@@ -150,8 +239,18 @@ def generate():
     except gemini.GeminiError as e:
         return api_error(str(e), 502)
     skip = rec.status == "skipped"
-    return jsonify({"ok": True, "response_id": rec.id, "cached": rec.cached, "skip": skip, "model": rec.model,
-                    "mode": w.reply_mode, "reply": "" if skip else rec.response_text.strip()})
+    clean_text, sequence = gemini.parse_response_actions(rec.response_text or "")
+    return jsonify({
+        "ok": True,
+        "response_id": rec.id,
+        "cached": rec.cached,
+        "skip": skip,
+        "model": rec.model,
+        "mode": w.reply_mode,
+        "reply": "" if skip else clean_text,
+        "raw_reply": "" if skip else (rec.response_text or "").strip(),
+        "sequence": [] if skip else sequence
+    })
 
 
 @bp.post("/answers/<int:rid>/result")

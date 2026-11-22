@@ -9,7 +9,7 @@
 <option value="off" {{ 'selected' if w.reply_mode=='off' }}>Do nothing - only collect</option>
 <option value="draft" {{ 'selected' if w.reply_mode=='draft' }}>Write the answer in the message box, I press send</option>
 <option value="auto" {{ 'selected' if w.reply_mode=='auto' }}>Send the answer automatically</option></select></div>
-<div class="f"><label for="cp">Extra instructions for this account (added to the shop-wide assistant prompt)</label><textarea id="cp" name="custom_prompt" placeholder="e.g. Never discuss price below the listed one. Offer free delivery above 8000 DA.">{{ w.custom_prompt or '' }}</textarea></div>
+<div class="f"><label for="cp">Account prompt (overrides the Global Prompt if set)</label><textarea id="cp" name="custom_prompt" style="min-height:160px" placeholder="Leave blank to use the Global Prompt from Settings. If set, this completely overrides the Global Prompt for this account with no hidden or extra instructions.">{{ w.custom_prompt or '' }}</textarea><div class="small muted">If filled, this full prompt completely overrides the Global Assistant Prompt for this Facebook account.</div></div>
 <div class="row"><div class="f"><label for="mo">Gemini model (blank = shop default)</label><input id="mo" name="model_override" value="{{ w.model_override or '' }}"></div>
 <div class="f"><label for="te">Temperature (blank = default)</label><input id="te" name="temperature" type="number" step="0.1" min="0" max="2" value="{{ w.temperature if w.temperature is not none else '' }}"></div>
 <div class="f"><label for="pi">Check inbox every (seconds)</label><input id="pi" name="poll_interval" type="number" min="20" value="{{ w.poll_interval }}"></div></div>

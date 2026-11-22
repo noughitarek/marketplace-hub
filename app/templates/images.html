@@ -1,0 +1,66 @@
+{% extends "base.html" %}{% block title %}Images{% endblock %}
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Images</h1>
+    <div class="sub">Keyword-triggered images for customer replies</div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="{{ url_for('web.image_new') }}">+ Upload image</a>
+  </div>
+</div>
+
+<div class="notice">
+  <b>How it works:</b> Assign a keyword to each image (e.g. <code>image1</code> or <code>catalogue</code>).
+  If the AI includes <code>%%keyword%%</code> in its response, the keyword is automatically stripped from the message and the image is sent to the customer in order (e.g. <code>%%image1%% Hello %%image2%%</code> sends image 1, then text, then image 2).
+</div>
+
+<form class="filters" method="get">
+  <div class="f"><input name="q" value="{{ q }}" placeholder="Search by keyword…" style="width:240px"></div>
+  <button class="btn sm">Filter</button>
+  {% if q %}<a class="btn sm" href="{{ url_for('web.images') }}">Reset</a>{% endif %}
+</form>
+
+<div class="card tbl">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:80px">Preview</th>
+        <th>Keyword</th>
+        <th>Trigger in prompt/chat</th>
+        <th>Filename</th>
+        <th>Uploaded</th>
+        <th class="r">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for img in images %}
+      <tr>
+        <td>
+          <a href="{{ url_for('static', filename='uploads/images/' + img.filename) }}" target="_blank" rel="noopener">
+            <img src="{{ url_for('static', filename='uploads/images/' + img.filename) }}" alt="{{ img.keyword }}" style="width:50px;height:50px;object-fit:cover;border-radius:6px;border:1px solid var(--line);display:block">
+          </a>
+        </td>
+        <td><b>{{ img.keyword }}</b></td>
+        <td><code>%%{{ img.clean_keyword }}%%</code></td>
+        <td class="small muted">{{ img.original_filename or img.filename }}</td>
+        <td class="small nowrap">{{ img.created_at|localdt }}</td>
+        <td class="r actions" style="justify-content:flex-end">
+          <a class="btn sm" href="{{ url_for('web.image_edit', iid=img.id) }}">Edit</a>
+          <form method="post" action="{{ url_for('web.image_delete', iid=img.id) }}" onsubmit="return confirm('Delete this image ({{ img.keyword }})?')" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button class="btn sm danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="muted" style="text-align:center;padding:24px">
+          No images uploaded yet. <a href="{{ url_for('web.image_new') }}">Upload your first image</a>.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

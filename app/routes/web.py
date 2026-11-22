@@ -1,13 +1,15 @@
 import hmac
+import os
 import secrets
 from datetime import date, timedelta
 from functools import wraps
 
 from flask import (Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for)
 from sqlalchemy import or_
+from werkzeug.utils import secure_filename
 
 from ..extensions import db
-from ..models import (ORDER_STATUSES, AIResponse, Conversation, Order, OrderItem, Product, Purchase, PurchaseItem,
+from ..models import (ORDER_STATUSES, AIResponse, Conversation, ImageAsset, Order, OrderItem, Product, Purchase, PurchaseItem,
                       StockMovement, TaskRun, Worker, utcnow)
 from ..services import gemini, geo, orders as order_svc, ref, settings, stats
 from ..services.ecotrack import EcotrackClient, EcotrackError
@@ -433,6 +435,99 @@ def conversation_order(cid):
     c = db.get_or_404(Conversation, cid)
     o = _create_draft_order(c, normalize(request.form.get("phone", "")) or None)
     return redirect(url_for("web.order_form", oid=o.id))
+
+
+# ---- images --------------------------------------------------------------------
+@bp.get("/images")
+def images():
+    q = request.args.get("q", "").strip()
+    query = ImageAsset.query
+    if q:
+        query = query.filter(ImageAsset.keyword.ilike(f"%{q}%"))
+    rows = query.order_by(ImageAsset.id.desc()).all()
+    return render_template("images.html", images=rows, q=q)
+
+
+@bp.route("/images/new", methods=["GET", "POST"])
+def image_new():
+    if request.method == "POST":
+        keyword = request.form.get("keyword", "").strip()
+        f = request.files.get("file")
+        if not keyword:
+            flash("Keyword is required.", "error")
+        elif not f or not f.filename:
+            flash("Image file is required.", "error")
+        else:
+            clean_kw = keyword.strip()
+            existing = ImageAsset.query.filter(ImageAsset.keyword.ilike(clean_kw)).first()
+            if existing:
+                flash(f"An image with keyword '{clean_kw}' already exists.", "error")
+            else:
+                ext = (os.path.splitext(f.filename)[1] or ".jpg").lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+                    ext = ".jpg"
+                fname = f"{secrets.token_hex(8)}_{secure_filename(f.filename)}"
+                save_dir = os.path.join(current_app.root_path, "static", "uploads", "images")
+                os.makedirs(save_dir, exist_ok=True)
+                f.save(os.path.join(save_dir, fname))
+                img = ImageAsset(keyword=clean_kw, filename=fname, original_filename=f.filename[:255])
+                db.session.add(img)
+                db.session.commit()
+                flash(f"Image for keyword '{clean_kw}' uploaded successfully.", "ok")
+                return redirect(url_for("web.images"))
+    return render_template("image_form.html", img=None)
+
+
+@bp.route("/images/<int:iid>/edit", methods=["GET", "POST"])
+def image_edit(iid):
+    img = db.get_or_404(ImageAsset, iid)
+    if request.method == "POST":
+        keyword = request.form.get("keyword", "").strip()
+        f = request.files.get("file")
+        if not keyword:
+            flash("Keyword is required.", "error")
+        else:
+            existing = ImageAsset.query.filter(ImageAsset.keyword.ilike(keyword), ImageAsset.id != iid).first()
+            if existing:
+                flash(f"An image with keyword '{keyword}' already exists.", "error")
+            else:
+                img.keyword = keyword
+                if f and f.filename:
+                    ext = (os.path.splitext(f.filename)[1] or ".jpg").lower()
+                    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+                        ext = ".jpg"
+                    fname = f"{secrets.token_hex(8)}_{secure_filename(f.filename)}"
+                    save_dir = os.path.join(current_app.root_path, "static", "uploads", "images")
+                    os.makedirs(save_dir, exist_ok=True)
+                    f.save(os.path.join(save_dir, fname))
+                    old_path = os.path.join(save_dir, img.filename)
+                    if os.path.exists(old_path):
+                        try:
+                            os.remove(old_path)
+                        except Exception:
+                            pass
+                    img.filename = fname
+                    img.original_filename = f.filename[:255]
+                db.session.commit()
+                flash("Image updated successfully.", "ok")
+                return redirect(url_for("web.images"))
+    return render_template("image_form.html", img=img)
+
+
+@bp.post("/images/<int:iid>/delete")
+def image_delete(iid):
+    img = db.get_or_404(ImageAsset, iid)
+    save_dir = os.path.join(current_app.root_path, "static", "uploads", "images")
+    old_path = os.path.join(save_dir, img.filename)
+    if os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+    db.session.delete(img)
+    db.session.commit()
+    flash(f"Image '{img.keyword}' deleted.", "ok")
+    return redirect(url_for("web.images"))
 
 
 # ---- settings ------------------------------------------------------------------
